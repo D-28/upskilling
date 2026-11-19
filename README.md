@@ -55,6 +55,7 @@ If you are opening this fresh without having read the original articles or watch
 | Directory / File | Purpose | Primary Sources |
 |---|---|---|
 | **[`.gitignore`](.gitignore)** | Keeps OS junk, `.env` secrets, and `.scratch/` files out of commits | Hygiene |
+| **[`todo.md`](todo.md)** | Backlog of concrete builds, Staff SWE / FDE research angles, and pruning dates | Roadmap |
 | **[`radar/2026-11-18-digest.md`](radar/2026-11-18-digest.md)** | Signal/noise triage & self-contained notes for links **A–G** | A–G |
 | **[`playbooks/harness-loop-graph.md`](playbooks/harness-loop-graph.md)** | 3-layer agent architecture, diagnostics, and Undo-Price Gating | A, C, E |
 | **[`playbooks/verification-engineering.md`](playbooks/verification-engineering.md)** | Test hierarchy, anti-gaming review setup, empirical rule evals | B, C, G |
