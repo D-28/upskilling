@@ -47,6 +47,7 @@ A living tracker for ideas, hands-on experiments, toolkit upgrades, and Staff SW
 - [ ] Track whether programmatic tool execution (**Code Mode** `[D]`) exits experimental status, expands beyond interactive CLI to IDE/SDK/Bedrock/Vertex/ZDR, or sees first-party adoption in GitHub Copilot CLI and Codex.
 - [ ] Evaluate real-world reliability of long-running background loops (`/loop` `[C]`, `/goal`, Code Mode background scripts `[D]`) vs. structured `run_workflow` / `swarm` graphs.
 - [ ] Watch for open standards converging around `SKILL.md`, hooks, and MCP tool-output filtering.
+- [ ] **Tool evaluation — `https://sous.io/markdown/#/`:** Research what problem it solves and assess whether it offers practical merit or is redundant given late-2026 model capabilities and modern agent harnesses.
 
 ---
 
