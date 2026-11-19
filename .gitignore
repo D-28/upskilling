@@ -1,0 +1,16 @@
+# OS & editor junk
+.DS_Store
+.vscode/
+.idea/
+
+# Environment & secrets (public repo hygiene)
+.env
+.env.*
+*.local.*
+
+# Scratch, logs & dependencies
+.scratch/
+*.log
+node_modules/
+__pycache__/
+*.pyc

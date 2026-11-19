@@ -1,0 +1,44 @@
+# REVIEW.md (Drop-In Base-Branch Rubric Template)
+
+> **Critical Invariant (`[B]`):** Review tooling and agents **must load `REVIEW.md` from the base/default branch** (e.g., `origin/main`), **never** from the pull request branch being evaluated. A code change cannot edit the rubric that grades it.
+>
+> *(If a PR legitimately edits `REVIEW.md` itself, flag that diff for human code-owner approval.)*
+
+---
+
+## 1. Review Principles `[B]`
+1. **Review fixed commits, not moving targets.** Always record the exact commit SHA reviewed.
+2. **Tag every finding strictly** using one of three labels:
+   - **`Important`** — Must fix before merge (real bug, security flaw, data loss, broken backwards compatibility, missing runtime verification).
+   - **`Nit`** — Optional readability/polish suggestion; never block merge.
+   - **`Pre-existing`** — Defect noticed nearby that already existed on the base branch; flag for tracking without blocking this PR.
+3. **Never stack redundant passes blindly.** Build upon context from earlier review rounds and past verification failures (`[B]`).
+4. **Flag unverified high-risk (`NO UNDO`) changes** for mandatory human sign-off (migrations, deletions, billing, auth boundaries, CI/workflow permissions) (`[C]`).
+
+---
+
+## 2. Diff-Triggered Reliability Checklist `[B]`
+
+Do **not** run all items on every small PR. Scan the diff first and execute **only the items whose trigger matches** (typically 3–10 checks).
+
+| # | Diff Trigger (When Diff Touches...) | Required Check | Origin / Incident Note |
+|---|---|---|---|
+| 1 | Session storage, persisted JSON, or message schemas | **Backward-compat load:** Confirm old persisted records missing new fields deserialize safely without crashing `[B]` | e.g., `--resume loads old transcripts` `[B]` |
+| 2 | Database migrations or schema changes | **Reversibility & lock safety:** Verify additive-first expand/contract steps, non-blocking index creation, and rollback notes | Add incident/PR link |
+| 3 | Auth, session cookies, RBAC, or permission checks | **AuthZ boundary:** Verify enforcement happens server-side outside model prompts and fail-closed on missing/expired tokens `[C]` | Add incident/PR link |
+| 4 | Retry loops, webhooks, queues, or payment/state mutations | **Idempotency:** Confirm duplicate delivery or retry produces the exact same final state (`[B]`) | Add incident/PR link |
+| 5 | Parser, serializer, or data format converter | **Round-trip property:** Confirm `decode(encode(x)) == x` and malformed input handling (`[B]`) | Add incident/PR link |
+| 6 | Test files (`*.test.*`, `*.spec.*`) | **No fake green:** Reject newly added `.skip`, arbitrary `sleep()`, weakened assertions, or mock-only tests hiding broken integration `[B]` | Anti-flake policy |
+| 7 | CI workflows, hooks, `REVIEW.md`, or permission files | **Check integrity:** Require explicit dual/owner human sign-off before changing gates or verification criteria `[B]` | Base-branch protection |
+| 8 | External API / MCP / subprocess integrations | **Input bounds & secret hygiene:** Confirm untrusted payloads aren't interpolated into shells/scripts and secrets stay in vaults `[D]`, `[E]` | Add incident/PR link |
+
+---
+
+## 3. How New Rules Earn a Spot Here (Empirical Promotion) `[B]`
+
+Do **not** dump one-off nitpicks into `REVIEW.md`. New rules enter only via two evidence-backed paths:
+1. **Recurring pattern:** Issue appeared in **≥ 2 real PRs** (review comments or reverts) and is **identifiable from a diff** → have **3 agents try to disprove the rule** → merge via human-approved PR `[B]`.
+2. **Incident replay:** Replay **3 independent bug finders** against an incident PR; if **≥ 2 catch the bug** on a small diff where current rules missed it, add a targeted trigger + check here `[B]`.
+
+## 4. Pruning Policy `[B]`
+Quarterly, remove rules that never trigger, produce excessive false positives against clean control PRs, or are now enforced deterministically by CI lint/typechecks ("Write It Twice" `[C]`).

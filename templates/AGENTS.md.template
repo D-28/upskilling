@@ -1,0 +1,58 @@
+# AGENTS.md (Drop-In Template)
+
+> **Usage:** Copy this file to the root of a repository as `AGENTS.md` (or `CLAUDE.md` / `.github/copilot-instructions.md`).
+> **Design rule (`[C]`, `[B]`):** Context is an attention budget, not storage. Keep this root file **short** (a map, not a manual), point out to deeper docs loaded only when needed, enforce critical rules twice (*guide + CI check*), and prune stale lines routinely.
+
+---
+
+## 1. Project Snapshot
+- **Purpose:** `<1-2 sentence description of what this repo builds>`
+- **Primary Stack:** `<language, runtime, framework, package manager>`
+- **Non-Goals / Do Not Touch:** `<e.g., Do not edit generated/ or legacy-v1/ without explicit instruction>`
+
+## 2. Navigation Map (Load On Demand Only) `[C]`
+
+| Topic | Path | Load When |
+|---|---|---|
+| Architecture & boundaries | `docs/architecture.md` | Adding modules, services, or cross-layer calls |
+| Domain vocabulary | `docs/GLOSSARY.md` | Naming entities, states, API fields, or UI terms `[G]` |
+| Architecture decisions | `docs/adr/` | Questioning why a pattern or library was chosen `[G]` |
+| Testing & E2E harness | `docs/testing.md` | Writing or debugging unit, property, or E2E checks `[B]` |
+| Security & permissions | `docs/security.md` | Touching auth, secrets, network egress, or CI `[C]` |
+| Commands & scripts | `docs/commands.md` | Running build, lint, typecheck, or local servers |
+
+## 3. Fast Commands
+```bash
+# Install / setup
+<command>
+
+# Fast inner-loop checks (run before committing or opening a PR) [B]
+<lint-command>
+<typecheck-command>
+<unit-test-command>
+
+# End-to-end runtime verification [B]
+<e2e-or-smoke-command>
+```
+
+## 4. Task Contract (`done_when`) `[C]`
+Before editing files on any non-trivial task, write down (or confirm):
+- **`goal`:** What problem is being solved?
+- **`constraints`:** Allowed files/directories (`FENCE`), what must *not* change.
+- **`done_when`:** Exact deterministic check(s) + runtime verification proving success.
+- **`PROGRESS.md` (for multi-step tasks):** Record `tried`, `known`, `next`, and `never` on disk so crashes or context resets never lose dead ends `[C]`.
+
+## 5. "Write It Twice" Guardrails (`GUIDE` + `CHECK`) `[C]`
+Every non-negotiable invariant lives in **both** prose (so agents understand *why*) and an un-bypassable automated check (so agents cannot violate it on an off day):
+
+| Rule (`GUIDE` for humans & agents) | Automated Enforcement (`CHECK` in CI / lint / hooks) |
+|---|---|
+| UI components never query the database directly; go through `services/` | Lint / import-boundary rule fails if `src/ui/**` imports `src/db/**` `[C]` |
+| No skipping, `sleep()`, or blind retries on flaky tests `[B]` | Lint / CI check rejects `.skip`, `xit`, or unapproved retry plugins |
+| Never log raw credentials, PII, or session tokens `[B]` | Secret scanner + log-redaction test in CI + pre-commit hook |
+| `<Add repo-specific invariant>` | `<Add exact CI/lint/schema gate>` |
+
+## 6. Verification & Escalation Rules `[B]`, `[C]`
+1. **Run the real change:** Use the repo's `/verify` skill (or E2E smoke test) before claiming done `[B]`.
+2. **3-strike rule:** If a check fails after **3 repair rounds**—or produces the exact same error twice—stop editing and escalate to a human with `FAILED / EXPECTED / SAW / DEAD ENDS` `[B]`, `[C]`.
+3. **Maintenance cadence:** Review and prune outdated rules from this file monthly (`[B]`).
