@@ -25,3 +25,6 @@ Map every tool exposed to your production agent to one of the three tiers *befor
 - **Read / Compute tools** → `ONE-CLICK UNDO` (allowed automatically inside sandbox).
 - **Draft / Stage tools** (create draft PR, stage draft email, write to isolated staging table) → `CLEANUP UNDO` (allowed with validation + trace).
 - **Commit / Send / Mutate Prod tools** (send customer message, issue refund, run destructive SQL, trigger deploy) → `NO UNDO` (enforced by **Harness Walls** outside the model `[C]`: tool returns a pending approval request that pauses until a human clicks approve).
+
+### C. Unattended / Scheduled Runs (Fail-Closed Staging)
+When a background or scheduled agent encounters a gated side effect with no human available, it must **fail closed**—never hang waiting for interactive approval and never bypass the gate. Deny the execution, write the prepared draft, diff, or payload to a staging/review queue, and surface it in the next interactive summary for explicit human sign-off.

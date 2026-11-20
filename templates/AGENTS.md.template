@@ -55,4 +55,5 @@ Every non-negotiable invariant lives in **both** prose (so agents understand *wh
 ## 6. Verification & Escalation Rules `[B]`, `[C]`
 1. **Run the real change:** Use the repo's `/verify` skill (or E2E smoke test) before claiming done `[B]`.
 2. **3-strike rule:** If a check fails after **3 repair rounds**—or produces the exact same error twice—stop editing and escalate to a human with `FAILED / EXPECTED / SAW / DEAD ENDS` `[B]`, `[C]`.
-3. **Maintenance cadence:** Review and prune outdated rules from this file monthly (`[B]`).
+3. **Memory hygiene:** If two disk notes contradict each other, flag the conflict explicitly instead of silently picking one, and tag any unverified fact or assumption as `UNCONFIRMED`.
+4. **Maintenance & audit cadence:** Review and prune outdated rules from this file monthly (`[B]`), and periodically run a separate read-only audit pass to surface stale or conflicting memory files (`PROGRESS.md`, `GLOSSARY.md`, ADRs).
