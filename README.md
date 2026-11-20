@@ -37,16 +37,19 @@ Everything in this repository connects into one end-to-end engineering pipeline:
 
 ---
 
-## Suggested Reading Order (Start Here)
+## How to Digest This Repo (3-Pass Learn-by-Doing)
 
-If you are opening this fresh without having read the original articles or watched the video, read in this order:
+Don't read the repo front-to-back like a textbook—build the core mental frame first, then run hands-on reps:
 
-1. **[November 18, 2026 Digest (`radar/2026-11-18-digest.md`)](radar/2026-11-18-digest.md)** — Self-contained summaries and signal/noise verdicts for sources **A–G**, plus how they map to Staff SWE vs. FDE/FDSE work and Antigravity vs. GitHub Copilot CLI.
-2. **[Harness, Loop, Graph (`playbooks/harness-loop-graph.md`)](playbooks/harness-loop-graph.md)** — The 3-layer mental model (**A, C, E**), "Write It Twice" enforcement, Early-Start Test, and the failure-to-layer diagnostic table.
-3. **[Verification Engineering (`playbooks/verification-engineering.md`)](playbooks/verification-engineering.md)** — Why ~90% AI-authored code shifts humans to defining "done" and reviewing evidence (**B**): E2E, property, and differential tests, base-branch `REVIEW.md`, `observe → enforce` gates, and revert-based rule evals.
-4. **[Model & Effort Economics (`playbooks/model-effort-economics.md`)](playbooks/model-effort-economics.md)** — Separating model choice from reasoning effort, failure diagnosis, prompt-cache hygiene, and tiered planner/subagent routing (**F, G**).
-5. **[Programmatic Tooling, MCP & Managed Runtimes (`playbooks/programmatic-tooling-mcp.md`)](playbooks/programmatic-tooling-mcp.md)** — How Code Mode / workflow scripts eliminate tool-result bloat, MCP & hook security implications, enterprise limits, and decoupled Brain/Hands runtimes (**D, E, G**).
-6. **Drop-in assets** — Copy or adapt `skills/`, `templates/`, and `hooks/` into real repositories.
+1. **Pass 1 — Build the Coat Rack First (~15 min, no coding):**
+   Read the ASCII diagram above + **[`playbooks/harness-loop-graph.md`](playbooks/harness-loop-graph.md)** first (skip the raw digest for now). Then take one recent frustrating agent run and use its **Failure-to-Layer Diagnostic Matrix** to pinpoint whether the Harness, Loop, or Graph broke.
+2. **Pass 2 — Feel the Two Biggest Workflow Shifts Hands-On (2 short reps):**
+   - *Upstream (Smart Zone + Slicing — `G`):* Run `/grill-me` or **[`skills/grill-to-spec/SKILL.md`](skills/grill-to-spec/SKILL.md)** on a real feature to produce a tiny `GLOSSARY.md` + 2 vertical tracer-bullet tickets, then **reset context into a fresh session** before implementing Ticket 1.
+   - *Downstream (Runtime Verification — `B`):* Run **[`skills/verify/SKILL.md`](skills/verify/SKILL.md)** so the agent boots and exercises the real app (not just unit mocks), and seed **[`templates/REVIEW.md.template`](templates/REVIEW.md.template)** with 3–5 real diff triggers from your day job.
+3. **Pass 3 — Architectural Judgment & Scenario Drill (~20 min):**
+   Read **[`playbooks/model-effort-economics.md`](playbooks/model-effort-economics.md)** and **[`playbooks/programmatic-tooling-mcp.md`](playbooks/programmatic-tooling-mcp.md)**, then ask an agent to quiz you with a 10-minute Staff SWE / FDE troubleshooting scenario drill to lock in the failure modes.
+4. **Reference Lookup:**
+   Treat **[`radar/2026-11-18-digest.md`](radar/2026-11-18-digest.md)** as a searchable reference rather than mandatory linear reading (and watch only targeted primary clips if desired: **G** `0:40:15–0:57:50` and Isabella He's Managed Agents talk behind **E**).
 
 ---
 
