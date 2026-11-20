@@ -34,41 +34,35 @@ A living tracker for ideas, hands-on experiments, toolkit upgrades, and Staff SW
 Goal: catch leading-edge agentic engineering shifts within ~24h without X-scrolling noise, alert fatigue, or `radar/` bloat—dogfooding [`playbooks/harness-loop-graph.md`](playbooks/harness-loop-graph.md), [`playbooks/verification-engineering.md`](playbooks/verification-engineering.md), [`playbooks/model-effort-economics.md`](playbooks/model-effort-economics.md), [`playbooks/programmatic-tooling-mcp.md`](playbooks/programmatic-tooling-mcp.md), and [`templates/undo-price-gating.md`](templates/undo-price-gating.md).
 
 ### Locked Design Decisions
-- [x] **Execution runtime & LLM billing:** GitHub Actions `cron` + billed **Gemini Developer API** key (paid tier for data privacy; models parameterized via repo vars `STAGE1_MODEL` / `STAGE2_MODEL`).
+- [x] **Execution runtime & LLM billing:** GitHub Actions `cron` + billed **Gemini Developer API** key (paid tier for data privacy; defaults to dynamic `-latest` aliases `gemini-flash-lite-latest` / `gemini-flash-latest` over `v1beta` with `response.model_version` trace logging, overridable via repo vars `STAGE1_MODEL` / `STAGE2_MODEL`).
 - [x] **Ingestion vs. review cadence:** Daily sweep updating **one rolling weekly Draft PR** (silent no-op on null weeks; `high-signal` label if score ≥ 9/10).
-- [x] **Source coverage:** Scrape-free primary feeds + **1–2 curated aggregators** (HN Algolia API with score/keyword threshold, Simon Willison linklog RSS, Addy Osmani Substack RSS) + **owner-only `workflow_dispatch` fast-lane** for ad-hoc X links.
-- [x] **Feed-list governance:** `feeds.yaml` on `main` is strictly human-edited (never auto-mutated by untrusted web input); recurring unsubscribed domains are surfaced as promotion candidates after **≥ 2 human-merged items**.
+- [x] **Source coverage:** Scrape-free primary feeds + **curated aggregators** (HN Algolia API with score/keyword threshold, Simon Willison linklog RSS, Addy Osmani Substack RSS) + **owner-only `workflow_dispatch` fast-lane** for ad-hoc X links.
+- [x] **Feed-list governance:** `radar/feeds.yaml` on `main` is strictly human-edited (never auto-mutated by untrusted web input); recurring unsubscribed domains are surfaced as promotion candidates after **≥ 2 human-merged items**.
 
 ### Phase 0 — Harness Contract, Scoring Rubric & Calibration Fixture (`[B]`, `[C]`, `[F]`)
-- [ ] Define `done_when` contract and deterministic per-run ceilings (`MAX_ITEMS_PER_RUN`, `MAX_BYTES_PER_ITEM`, `MAX_STAGE2_SURVIVORS`, token/cost cap).
-- [ ] Codify the **deterministic 0–10 Signal Rubric** (2 hard gates + 5 discrete `0–2` dimensions summed in Python, never free-form LLM vibes):
-  - *Hard Gates (fail = instant drop):* **Net-New Delta** (not already covered in repo) + **Substance** (concrete code, evals, release diff, failure mode, or workflow primitive—not hype/opinion).
-  - *Scored Dimensions (0–2 each):* **Delta Novelty**, **Durability / Tool-Agnosticism**, **Actionability** (maps to a concrete `playbooks/` / `templates/` / `skills/` / `hooks/` edit), **Evidence Quality**, and **Staff SWE / FDE-FDSE Career Leverage**.
-  - *Thresholds:* `< 6` DROP · `6–8` STAGE into rolling Draft PR · `9–10` STAGE + `high-signal` label.
-- [ ] Create checked-in `feeds.yaml` covering official engineering blogs/changelogs (Anthropic/`claude.dev`, GitHub/Copilot CLI, OpenAI/Codex, Google/Antigravity), GitHub `releases.atom` feeds, YouTube channel Atom feeds, and 2–4 curated practitioner RSS/HN feeds.
-- [ ] Build a compact `REPO_INVENTORY` generator (~1.5–2K tokens summarizing existing coverage across `playbooks/`, `templates/`, `skills/`, and `todo.md`) so Stage 1 gets a stable, high-hit-rate prompt cache prefix without dumping the whole repo into context (`[F]`, `[G]`).
-- [ ] Create an offline **replay calibration fixture** from [`radar/2026-11-18-digest.md`](radar/2026-11-18-digest.md) (**A–G**) + 3–5 known hype/redundant articles: verify 0% false-positive bloat against current `playbooks/`, high recall when a playbook is withheld, and benchmark **Gemini Flash (high thinking)** vs. **Gemini Pro** on Stage 2 (`[B]`, `[F]`).
+- [x] Define `done_when` contract and deterministic per-run ceilings (`MAX_ITEMS_PER_RUN`, `MAX_HTTP_BYTES`, `MAX_STAGE2_SURVIVORS`, `MAX_ITEM_AGE_DAYS`, USD cost circuit breaker) in [`scripts/radar/config.py`](scripts/radar/config.py).
+- [x] Codify the **deterministic 0–10 Signal Rubric** (2 hard gates + 5 discrete `0–2` dimensions summed in Python) in [`scripts/radar/rubric.py`](scripts/radar/rubric.py).
+- [x] Create checked-in [`radar/feeds.yaml`](radar/feeds.yaml) covering official blogs/changelogs, GitHub Releases Atom + `CHANGELOG.md` fallback, and curated practitioner/HN feeds.
+- [x] Build compact `REPO_INVENTORY` generator in [`scripts/radar/inventory.py`](scripts/radar/inventory.py).
+- [x] Create offline **replay calibration fixture** in [`tests/radar/fixtures/nov2026_replay.json`](tests/radar/fixtures/nov2026_replay.json).
+- [ ] Run live calibration benchmark (`eval-fixture --live`) with `GEMINI_API_KEY` to confirm `gemini-flash-latest` (`HIGH`) meets recall/precision bars (or escalate `STAGE2_MODEL` to `gemini-pro-latest`).
 
 ### Phase 1 — Deterministic Stage 0 Fetcher, Sanitizer & State Store (`[C]` 4 Cuts #3, `[D]`)
-- [ ] Build a deterministic Python Stage 0 script (0 LLM tokens) to fetch feeds with pinned URLs, strict HTTP timeouts, response size limits, HTML-to-text stripping, URL canonicalization (strip UTM/tracking params), and cross-source deduplication (`canonical_url` + content/title hash).
-- [ ] Add deterministic release-noise filtering: drop patch-only bumps unless release notes match architectural keywords (`hook`, `MCP`, `skill`, `sandbox`, `code mode`, `effort`, `eval`, `agent`).
-- [ ] Store deduplication and feed telemetry (`seen.json`, `feed-health.json`) on a dedicated **orphan `radar-state` branch** so `main` stays branch-protected and free of bot commit churn.
+- [x] Build deterministic Python Stage 0 fetcher, URL canonicalizer, cross-source deduper, patch-release filter, and SSRF-guarded Survivor Enricher in [`scripts/radar/fetcher.py`](scripts/radar/fetcher.py) and [`scripts/radar/security.py`](scripts/radar/security.py).
+- [x] Implement backward-compatible `seen.json` & `feed-health.json` persistence on orphan branch `radar-state` in [`scripts/radar/state.py`](scripts/radar/state.py).
 
 ### Phase 2 — Zero-Tool Tiered Delta Filter & Prompt-Injection Walls (`[C]`, `[D]`, `[F]`)
-- [ ] **Stage 1 (`STAGE1_MODEL`: Gemini Flash, Low Thinking, Zero Tools):** Triage bounded item excerpts against the cached `REPO_INVENTORY` prefix using strict JSON Schema verdicts (`ALREADY_COVERED:<file>`, `MODEL_RELEASE_FLUFF`, `MARKETING_REBRAND`, `NO_WORKFLOW_DELTA`, or `SURVIVOR`). Keep effort fixed across the batch to preserve prompt caching (`[F]`).
-- [ ] **Stage 2 (`STAGE2_MODEL`: Gemini Flash High Thinking — escalate to Gemini Pro only if Phase 0 fixture shows a capability ceiling; Survivors Only, Zero Tools):** Pass bounded clean text + *only* the relevant playbook/template file(s); require a mandatory `counterargument_to_drop` falsification field before emitting the five `0–2` rubric scores (summed in Python), exact net-new gap, suggested ≤5-line refinement or `radar/` note, and Staff SWE / FDE takeaway.
-- [ ] **Enforce Harness Walls (`[C]`, `[D]`):** Zero tools/shell/MCP enabled on any LLM call touching untrusted web content; strict JSON Schema validation + markdown/HTML sanitization in Python; restrict automated file writes strictly to `radar/` (never directly mutate `playbooks/`, `skills/`, `feeds.yaml`, `.github/workflows/`, or `main`).
+- [x] Implement zero-tool batched Stage 1 (`gemini-flash-lite-latest`, `LOW`) and survivor-only Stage 2 (`gemini-flash-latest`, `HIGH`, mandatory `counterargument_to_drop`) with auto `v1beta` routing and `model_version` trace logging in [`scripts/radar/llm.py`](scripts/radar/llm.py).
+- [x] Enforce Harness Walls: zero tools on LLM calls, strict JSON Schema + Markdown sanitization, and write restriction to `radar/*.md` only.
 
 ### Phase 3 — Fail-Closed Delivery, Safe Rollout (`observe → enforce`) & Fast-Lane Intake (`[B]`, [`templates/undo-price-gating.md`](templates/undo-price-gating.md))
-- [ ] Add headless GitHub Actions workflow (`schedule` + owner-only `workflow_dispatch` for ad-hoc X/URL triage—never allow untrusted public `issues` or `pull_request_target` triggers) with SHA-pinned actions and minimal `permissions`. Account for GitHub Actions' 60-day inactivity auto-disable.
-- [ ] **Fail-closed staging (`CLEANUP UNDO`):** Open or update **one rolling Draft PR** only when ≥1 survivor scores ≥ 6/10; on null weeks, write a 1-line summary to the Actions Job Summary and update `radar-state` without opening any PR. Never auto-merge to `main`.
-- [ ] **2-week `observe` rollout (`[B]`):** Run triage into Actions Job Summary only (no Draft PRs) for 2 weeks, inspect false positives/negatives, and tune thresholds before enabling Draft PR staging.
+- [x] Add 2-job privilege-separated GitHub Actions workflow ([`.github/workflows/radar-ingest.yml`](.github/workflows/radar-ingest.yml)) + CI workflow ([`.github/workflows/radar-ci.yml`](.github/workflows/radar-ci.yml)) + setup guide ([`docs/radar-setup.md`](docs/radar-setup.md)).
+- [ ] Configure `GEMINI_API_KEY` secret + *"Allow GitHub Actions to create and approve pull requests"* in GitHub repo settings and run Day-1 `mode=bootstrap` via `workflow_dispatch`.
+- [ ] **2-week `observe` rollout (`[B]`):** Audit Actions Job Summaries for 2 weeks, tune thresholds/keywords if needed, then set repo variable `RADAR_MODE=enforce`.
 
 ### Phase 4 — Empirical Feed Health, Promotion & Pruning Loop (`[B]`, `[F]`)
-- [ ] Track per-feed outcome telemetry in `radar-state` (`items_fetched`, `stage1_survivors`, `stage2_accepted`, `human_merged`, `human_closed_rejected`, `consecutive_fetch_errors`, plus `unsubscribed_domain_hits` from aggregators/fast-lane merges).
-- [ ] Generate a quarterly feed-health report flagging:
-  - **Prune candidates:** feeds with **0 human-merged items in 90 days**, **>90% rejection rate**, or **≥3 consecutive fetch failures**.
-  - **Promote candidates:** unsubscribed domains/authors with **≥ 2 human-merged items in 90 days** for optional manual addition to `feeds.yaml`.
+- [x] Implement automated PR merge/close telemetry reconciliation and quarterly prune/≥2-hit promotion report generation ([`scripts/radar/reconcile_prs.py`](scripts/radar/reconcile_prs.py), [`scripts/radar/state.py`](scripts/radar/state.py)).
+- [ ] Review first quarterly `feed-health-report.md` on `radar-state` and prune/promote sources manually in `radar/feeds.yaml`.
 
 ---
 

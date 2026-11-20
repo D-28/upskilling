@@ -1,0 +1,46 @@
+name: Radar Pipeline CI
+
+on:
+  pull_request:
+    paths:
+      - "pyproject.toml"
+      - "radar/feeds.yaml"
+      - "scripts/radar/**"
+      - "tests/radar/**"
+      - ".github/workflows/radar-*.yml"
+  push:
+    branches:
+      - main
+    paths:
+      - "pyproject.toml"
+      - "radar/feeds.yaml"
+      - "scripts/radar/**"
+      - "tests/radar/**"
+      - ".github/workflows/radar-*.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  test-and-lint:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@1db35dd8eee11c5894872e0b383ae6c406cf738d # v10.4.0
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: uv sync
+
+      - name: Lint with ruff
+        run: uv run ruff check scripts tests
+
+      - name: Run unit, property, and offline E2E tests
+        run: uv run pytest -v
+
+      - name: Validate radar/feeds.yaml schema
+        run: uv run python -c "from pathlib import Path; from scripts.radar.fetcher import load_feed_registry; reg = load_feed_registry(Path('radar/feeds.yaml')); print(f'Loaded {len(reg.feeds)} feeds cleanly.')"
