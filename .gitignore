@@ -10,7 +10,12 @@
 
 # Scratch, logs & dependencies
 .scratch/
+.radar-out/
 *.log
 node_modules/
 __pycache__/
 *.pyc
+.venv/
+.pytest_cache/
+.ruff_cache/
+.hypothesis/
