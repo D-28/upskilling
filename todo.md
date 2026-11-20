@@ -90,14 +90,14 @@ Goal: catch leading-edge agentic engineering shifts within ~24h without X-scroll
 - [ ] Track whether programmatic tool execution (**Code Mode** `[D]`) exits experimental status, expands beyond interactive CLI to IDE/SDK/Bedrock/Vertex/ZDR, or sees first-party adoption in GitHub Copilot CLI and Codex.
 - [ ] Evaluate real-world reliability of long-running background loops (`/loop` `[C]`, `/goal`, Code Mode background scripts `[D]`) vs. structured `run_workflow` / `swarm` graphs.
 - [ ] Watch for open standards converging around `SKILL.md`, hooks, and MCP tool-output filtering.
-- [ ] **Tool evaluation — `https://sous.io/markdown/#/`:** Research what problem it solves and assess whether it offers practical merit or is redundant given late-2026 model capabilities and modern agent harnesses.
+- [x] **Tool evaluation — `https://sous.io/markdown/#/` ([`sous-io/sous`](https://github.com/sous-io/sous)):** Evaluated (`2026-11-20`) — **Skip CLI adoption for now** (3-star solo-maintained tool; Linux + Claude Code only; gitignored outputs conflict with CI/cloud agents), and documented its Layer-0 Harness placement, **3-tier multi-repo scaling ladder**, and 3 reserve patterns in [`radar/2026-11-20-sous-evaluation.md`](radar/2026-11-20-sous-evaluation.md) (held out of `playbooks/`/`skills/` until validated in real practice).
 
 ---
 
 ## 5. Scheduled Maintenance & Pruning (`[B]`, `[F]`)
 
 - [ ] **Quarterly review (`2027-02-18`):**
-  - Re-evaluate [`radar/2026-11-18-digest.md`](radar/2026-11-18-digest.md) — promote proven items into `playbooks/` / `templates/`, archive or delete superseded notes.
+  - Re-evaluate [`radar/2026-11-18-digest.md`](radar/2026-11-18-digest.md) and [`radar/2026-11-20-sous-evaluation.md`](radar/2026-11-20-sous-evaluation.md) — promote proven items into `playbooks/` / `templates/`, archive or delete superseded notes.
   - Refresh the dated *"Snapshot as of November 2026"* model lineup in [`playbooks/model-effort-economics.md`](playbooks/model-effort-economics.md) and Code Mode constraints in [`playbooks/programmatic-tooling-mcp.md`](playbooks/programmatic-tooling-mcp.md).
   - Review `radar-state` feed-health telemetry (once live) and prune stale, noisy, or broken sources from `feeds.yaml`.
   - Prune unused rules or noisy checklist items across `skills/` and `templates/`.
