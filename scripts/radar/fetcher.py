@@ -2,31 +2,39 @@
 
 Zero LLM tokens are spent here (playbooks/harness-loop-graph.md, 4 Cuts #3):
 - Parses RSS 2.0, Atom, GitHub Releases Atom (+ CHANGELOG.md fallback), and HN Algolia JSON.
-- Canonicalizes URLs, strips tracking params, deduplicates across sources by
-  (canonical_url, title_hash, content_hash), drops items older than MAX_ITEM_AGE_DAYS,
-  and filters noisy patch-only releases unless they match architectural keywords.
+- Uses incremental `ET.XMLPullParser` with `MAX_FEED_BYTES` (4 MiB) + entity-expansion
+  guards so large full-content RSS feeds parse cleanly and stop as soon as `max_items`
+  are collected (gracefully surviving trailing truncation if >=1 complete item parsed).
+- Canonicalizes URLs (stripping tracking params and percent-encoding Markdown-breaking
+  characters), deduplicates across sources by (canonical_url, title_hash, content_hash),
+  drops items older than MAX_ITEM_AGE_DAYS, and filters noisy patch-only releases.
 - Enriches only Stage 1 survivors that have short feed excerpts, with strict SSRF walls
-  and fail-closed handling for paywalls/403s/CAPTCHAs.
+  (including post-connect peer-IP verification against DNS rebinding) and fail-closed
+  handling for paywalls/403s/CAPTCHAs.
 """
 
 from __future__ import annotations
 
 import email.utils
 import hashlib
+import http.client
 import json
+import os
 import re
+import ssl
 import urllib.error
 import urllib.request
 import xml.etree.ElementTree as ET
 from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from urllib.parse import parse_qsl, urlencode, urljoin, urlparse, urlunparse
+from urllib.parse import parse_qsl, quote, urlencode, urljoin, urlparse, urlunparse
 
 import yaml
 
 from scripts.radar.config import (
     HTTP_TIMEOUT_SECONDS,
+    MAX_FEED_BYTES,
     MAX_HTTP_BYTES,
     MAX_HTTP_REDIRECTS,
     MAX_STAGE1_EXCERPT_CHARS,
@@ -44,8 +52,11 @@ from scripts.radar.models import (
 from scripts.radar.security import (
     SSRFError,
     html_to_plain_text,
+    is_blocked_ip,
+    redact_secrets,
     sanitize_single_line,
     validate_public_https_url,
+    validate_xml_no_entities,
 )
 
 # Tracking / marketing query parameters removed during URL canonicalization
@@ -80,6 +91,7 @@ _BOT_WALL_PATTERNS = (
     "hcaptcha",
     "just a moment...",
 )
+_UNSAFE_URL_CHARS_RE = re.compile(r"[\s()\[\]<>\"'`\\]")
 
 
 class _NoRedirectHandler(urllib.request.HTTPRedirectHandler):
@@ -89,8 +101,43 @@ class _NoRedirectHandler(urllib.request.HTTPRedirectHandler):
         return None
 
 
+class _SSRFSafeHTTPSConnection(http.client.HTTPSConnection):
+    """HTTPSConnection that verifies the connected socket peer IP before TLS/HTTP traffic.
+
+    Eliminates DNS-rebinding TOCTOU between `validate_public_https_url` and socket connect.
+    """
+
+    def connect(self) -> None:
+        super().connect()
+        if self.sock is not None:
+            try:
+                peer_ip = self.sock.getpeername()[0]
+            except OSError:
+                peer_ip = ""
+            if peer_ip and is_blocked_ip(peer_ip):
+                self.close()
+                raise SSRFError(f"Connected socket peer IP {peer_ip} is blocked (DNS rebinding guard)")
+
+
+class _SSRFSafeHTTPSHandler(urllib.request.HTTPSHandler):
+    """HTTPSHandler using _SSRFSafeHTTPSConnection when no HTTP(S)_PROXY is active."""
+
+    def https_open(self, req: urllib.request.Request):
+        if os.environ.get("HTTPS_PROXY") or os.environ.get("https_proxy"):
+            return super().https_open(req)
+        return self.do_open(
+            _SSRFSafeHTTPSConnection,
+            req,
+            context=ssl.create_default_context(),
+        )
+
+
+def _encode_markdown_unsafe_chars(text: str) -> str:
+    return _UNSAFE_URL_CHARS_RE.sub(lambda m: quote(m.group(0), safe=""), text)
+
+
 def canonicalize_url(url: str) -> str:
-    """Normalize a URL deterministically so cross-posted links dedupe cleanly."""
+    """Normalize a URL deterministically so cross-posted links dedupe and never break Markdown."""
     raw = url.strip()
     parsed = urlparse(raw)
     scheme = parsed.scheme.lower() or "https"
@@ -106,6 +153,7 @@ def canonicalize_url(url: str) -> str:
     path = re.sub(r"/{2,}", "/", parsed.path or "/")
     if path != "/" and path.endswith("/"):
         path = path.rstrip("/")
+    path = _encode_markdown_unsafe_chars(path)
 
     filtered_qs = [
         (k, v)
@@ -113,7 +161,7 @@ def canonicalize_url(url: str) -> str:
         if not k.lower().startswith("utm_") and k.lower() not in _TRACKING_PARAMS
     ]
     filtered_qs.sort(key=lambda pair: (pair[0], pair[1]))
-    query = urlencode(filtered_qs, doseq=True)
+    query = _encode_markdown_unsafe_chars(urlencode(filtered_qs, doseq=True))
     return urlunparse((scheme, netloc, path, "", query, ""))
 
 
@@ -147,14 +195,12 @@ def parse_timestamp(raw: str | None) -> datetime | None:
     if not raw or not raw.strip():
         return None
     text = raw.strip()
-    # Try ISO 8601
     try:
         iso = text.replace("Z", "+00:00")
         dt = datetime.fromisoformat(iso)
         return dt.astimezone(UTC) if dt.tzinfo else dt.replace(tzinfo=UTC)
     except ValueError:
         pass
-    # Try RFC 2822 (RSS pubDate)
     try:
         dt = email.utils.parsedate_to_datetime(text)
         return dt.astimezone(UTC) if dt.tzinfo else dt.replace(tzinfo=UTC)
@@ -167,8 +213,7 @@ def is_patch_only_semver(text: str) -> bool:
     m = _SEMVER_RE.search(text)
     if not m:
         return False
-    patch = int(m.group(3))
-    return patch > 0
+    return int(m.group(3)) > 0
 
 
 def matches_keywords(text: str, keywords: list[str]) -> bool:
@@ -194,9 +239,9 @@ def safe_http_get(
     max_redirects: int = MAX_HTTP_REDIRECTS,
     resolver: Callable[[str], list[str]] | None = None,
 ) -> tuple[str, bytes]:
-    """Fetch a public HTTPS URL with per-hop SSRF validation and hard byte caps."""
+    """Fetch a public HTTPS URL with per-hop SSRF validation, peer-IP check, and byte caps."""
     current_url = validate_public_https_url(url, resolver=resolver)
-    opener = urllib.request.build_opener(_NoRedirectHandler())
+    opener = urllib.request.build_opener(_NoRedirectHandler(), _SSRFSafeHTTPSHandler())
 
     for _ in range(max_redirects + 1):
         req = urllib.request.Request(
@@ -237,50 +282,75 @@ def _child_text(elem: ET.Element, *names: str) -> str:
     return ""
 
 
-def parse_rss_or_atom(xml_bytes: bytes, feed: FeedEntry) -> list[dict[str, str]]:
-    """Parse RSS 2.0 or Atom XML using Python stdlib into raw item dicts."""
-    root = ET.fromstring(xml_bytes)
-    root_name = _local_tag(root.tag)
-    entries: list[dict[str, str]] = []
+def _extract_atom_entry(entry: ET.Element) -> dict[str, str] | None:
+    title = _child_text(entry, "title")
+    link = ""
+    for child in entry:
+        if _local_tag(child.tag) == "link":
+            href = child.attrib.get("href", "").strip()
+            rel = child.attrib.get("rel", "alternate").lower()
+            if href and (rel == "alternate" or not link):
+                link = href
+    published = _child_text(entry, "published", "updated")
+    content = _child_text(entry, "content", "summary")
+    if title or link:
+        return {"title": title, "url": link, "published_at": published, "raw_body": content}
+    return None
 
-    if root_name == "feed":
-        # Atom
-        for entry in root:
-            if _local_tag(entry.tag) != "entry":
-                continue
-            title = _child_text(entry, "title")
-            link = ""
-            for child in entry:
-                if _local_tag(child.tag) == "link":
-                    href = child.attrib.get("href", "").strip()
-                    rel = child.attrib.get("rel", "alternate").lower()
-                    if href and (rel == "alternate" or not link):
-                        link = href
-            published = _child_text(entry, "published", "updated")
-            content = _child_text(entry, "content", "summary")
-            if title or link:
-                entries.append(
-                    {"title": title, "url": link, "published_at": published, "raw_body": content}
-                )
-    else:
-        # RSS 2.0 / RDF
-        channel = None
-        for child in root:
-            if _local_tag(child.tag) == "channel":
-                channel = child
-                break
-        container = channel if channel is not None else root
-        for item in container:
-            if _local_tag(item.tag) != "item":
-                continue
-            title = _child_text(item, "title")
-            link = _child_text(item, "link", "guid")
-            published = _child_text(item, "pubdate", "date", "published", "updated")
-            content = _child_text(item, "encoded", "description", "summary")
-            if title or link:
-                entries.append(
-                    {"title": title, "url": link, "published_at": published, "raw_body": content}
-                )
+
+def _extract_rss_item(item: ET.Element) -> dict[str, str] | None:
+    title = _child_text(item, "title")
+    link = _child_text(item, "link", "guid")
+    published = _child_text(item, "pubdate", "date", "published", "updated")
+    content = _child_text(item, "encoded", "description", "summary")
+    if title or link:
+        return {"title": title, "url": link, "published_at": published, "raw_body": content}
+    return None
+
+
+def parse_rss_or_atom(xml_bytes: bytes, feed: FeedEntry) -> list[dict[str, str]]:
+    """Incrementally parse RSS 2.0 or Atom XML with DTD/ENTITY guard and early-stop resilience.
+
+    Stops reading as soon as `feed.max_items` complete `<item>` or `<entry>` blocks are
+    collected. If a multi-megabyte feed is truncated at `MAX_FEED_BYTES` after at least one
+    complete item has been parsed, returns the complete items instead of failing the feed.
+    """
+    validate_xml_no_entities(xml_bytes)
+
+    pull = ET.XMLPullParser(events=("start", "end"))
+    entries: list[dict[str, str]] = []
+    root_name = ""
+    chunk_size = 65_536
+
+    try:
+        for offset in range(0, len(xml_bytes), chunk_size):
+            pull.feed(xml_bytes[offset : offset + chunk_size])
+            for event, elem in pull.read_events():
+                tag = _local_tag(elem.tag)
+                if event == "start":
+                    if not root_name:
+                        root_name = tag
+                    continue
+
+                # event == "end"
+                if root_name == "feed" and tag == "entry":
+                    extracted = _extract_atom_entry(elem)
+                    if extracted is not None:
+                        entries.append(extracted)
+                    elem.clear()
+                elif root_name != "feed" and tag == "item":
+                    extracted = _extract_rss_item(elem)
+                    if extracted is not None:
+                        entries.append(extracted)
+                    elem.clear()
+
+                if len(entries) >= feed.max_items:
+                    return entries[: feed.max_items]
+        pull.close()
+    except ET.ParseError:
+        if entries:
+            return entries[: feed.max_items]
+        raise
 
     return entries[: feed.max_items]
 
@@ -339,7 +409,9 @@ def fetch_candidates(
     """Run deterministic Stage 0 across all feeds in `registry`."""
     current_time = now or datetime.now(UTC)
     cutoff = current_time - timedelta(days=config.max_item_age_days)
-    getter = http_get or (lambda u: safe_http_get(u, user_agent=config.user_agent))
+    getter = http_get or (
+        lambda u: safe_http_get(u, user_agent=config.user_agent, max_bytes=MAX_FEED_BYTES)
+    )
 
     seen_urls = {rec.canonical_url for rec in seen.items.values()}
     seen_title_hashes = {rec.title_hash for rec in seen.items.values() if rec.title_hash}
@@ -358,7 +430,7 @@ def fetch_candidates(
                 raw_entries = parse_rss_or_atom(raw_bytes, feed)
         except Exception as exc:  # noqa: BLE001
             summary.ok = False
-            summary.error = str(exc)[:240]
+            summary.error = redact_secrets(str(exc))[:240]
             summaries.append(summary)
             continue
 
@@ -380,7 +452,6 @@ def fetch_candidates(
                 summary.filtered_count += 1
                 continue
 
-            # Age cutoff guard (prevents Day-1 historical flood)
             pub_dt = parse_timestamp(entry.get("published_at"))
             if pub_dt is not None and pub_dt < cutoff:
                 summary.filtered_count += 1
@@ -390,7 +461,6 @@ def fetch_candidates(
                 entry.get("raw_body", ""), max_chars=MAX_STAGE2_BODY_CHARS
             )
 
-            # Fallback to CHANGELOG.md when GitHub release Atom entries are bare/short
             if (
                 feed.type == "github_releases"
                 and feed.changelog_fallback_url
@@ -408,14 +478,12 @@ def fetch_candidates(
 
             combined_text = f"{title}\n{body_text}"
 
-            # Deterministic patch-release filter
             if feed.filter_patch_releases and is_patch_only_semver(title) and not matches_keywords(
                 combined_text, effective_keywords
             ):
                 summary.filtered_count += 1
                 continue
 
-            # Deterministic keyword filter for broad/noisy feeds
             if (
                 not feed.filter_patch_releases
                 and effective_keywords
@@ -427,7 +495,6 @@ def fetch_candidates(
             title_hash = normalize_title_hash(title)
             content_hash = make_content_hash(body_text) if len(body_text) >= 120 else ""
 
-            # Cross-source + historical deduplication
             if (
                 item_id in seen.items
                 or canonical in seen_urls
@@ -483,7 +550,9 @@ def build_fast_lane_candidate(
 ) -> CandidateItem:
     """Create a CandidateItem from a single owner-supplied URL (`workflow_dispatch`)."""
     canonical = canonicalize_url(url)
-    getter = http_get or (lambda u: safe_http_get(u, user_agent=config.user_agent))
+    getter = http_get or (
+        lambda u: safe_http_get(u, user_agent=config.user_agent, max_bytes=MAX_HTTP_BYTES)
+    )
     final_url, raw_bytes = getter(canonical)
     canonical = canonicalize_url(final_url)
     decoded = raw_bytes.decode("utf-8", errors="replace")
@@ -528,7 +597,9 @@ def enrich_survivor_body(
     if len(item.body) >= SHORT_BODY_ENRICH_THRESHOLD:
         return item.model_copy(update={"enrichment_status": "feed_sufficient"})
 
-    getter = http_get or (lambda u: safe_http_get(u, user_agent=config.user_agent))
+    getter = http_get or (
+        lambda u: safe_http_get(u, user_agent=config.user_agent, max_bytes=MAX_HTTP_BYTES)
+    )
     try:
         _, raw_bytes = getter(item.canonical_url)
         decoded = raw_bytes.decode("utf-8", errors="replace")

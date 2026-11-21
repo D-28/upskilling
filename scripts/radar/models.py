@@ -36,12 +36,16 @@ class FeedRegistry(BaseModel):
     feeds: list[FeedEntry] = Field(default_factory=list)
 
 
+ITEM_ID_PATTERN = r"^[a-f0-9]{12}$"
+ISO_WEEK_PATTERN = r"^20\d{2}-W(?:0[1-9]|[1-4]\d|5[0-3])$"
+
+
 class CandidateItem(BaseModel):
     """Normalized, sanitized item emitted by deterministic Stage 0."""
 
     model_config = ConfigDict(extra="ignore")
 
-    item_id: str  # deterministic short sha256 of canonical_url
+    item_id: str = Field(pattern=ITEM_ID_PATTERN)  # deterministic short sha256 of canonical_url
     feed_id: str
     feed_name: str
     title: str
@@ -70,7 +74,7 @@ Stage1VerdictCode = Literal[
 class Stage1ItemVerdict(BaseModel):
     """Structured triage decision for a single candidate item."""
 
-    item_id: str
+    item_id: str = Field(pattern=ITEM_ID_PATTERN)
     verdict: Stage1VerdictCode
     matched_repo_file: str = Field(
         default="",
@@ -98,7 +102,7 @@ class RubricDimensions(BaseModel):
 class Stage2Analysis(BaseModel):
     """Strict JSON Schema returned by zero-tool Stage 2 deep delta analysis."""
 
-    item_id: str
+    item_id: str = Field(pattern=ITEM_ID_PATTERN)
     passes_net_new_delta_gate: bool = Field(
         description="True ONLY if the item introduces a concrete engineering methodology, workflow refinement, or failure mode NOT already covered in the repo."
     )
@@ -229,7 +233,7 @@ class RunResult(BaseModel):
 
     schema_version: int = 1
     run_at: str
-    iso_week: str
+    iso_week: str = Field(pattern=ISO_WEEK_PATTERN)
     mode: Literal["observe", "enforce", "bootstrap"]
     fast_lane_url: str | None = None
     feed_summaries: list[FeedFetchSummary] = Field(default_factory=list)

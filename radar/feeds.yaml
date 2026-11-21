@@ -168,7 +168,7 @@ feeds:
   - id: hn-agentic
     name: Hacker News (High-Score Agentic Stories)
     type: hn_algolia
-    url: https://hn.algolia.com/api/v1/search_by_date?tags=story&numericFilters=points>=100&hitsPerPage=30
+    url: https://hn.algolia.com/api/v1/search_by_date?tags=story&numericFilters=points%3E%3D100&hitsPerPage=30
     category: aggregator
     max_items: 15
     min_points: 100
