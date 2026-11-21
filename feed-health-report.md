@@ -1,6 +1,6 @@
 # Radar Feed Health & Pruning Report
 
-- **Generated:** `2026-11-21T05:35:18.674525+00:00`
+- **Generated:** `2026-11-21T20:00:09.598851+00:00`
 - **Evaluation Window:** Last `90` days
 
 ## Per-Feed Telemetry
@@ -17,7 +17,7 @@
 | `karpathy-blog` | 0 | 0 | 0 | 0 | 0 | 0 |
 | `simon-willison` | 7 | 0 | 0 | 0 | 0 | 0 |
 | `addy-osmani-elevate` | 0 | 0 | 0 | 0 | 0 | 0 |
-| `hn-agentic` | 1 | 0 | 0 | 0 | 0 | 0 |
+| `hn-agentic` | 2 | 0 | 0 | 0 | 0 | 0 |
 
 ## Prune Candidates (Review Manually)
 - None flagged.

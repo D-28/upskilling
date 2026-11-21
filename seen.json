@@ -104,6 +104,14 @@
       "title_hash": "701f237dd5ae",
       "verdict": "BOOTSTRAP_SEEDED"
     },
+    "5c6d12478082": {
+      "canonical_url": "https://leanprover-community.github.io/blog/posts/riemann-hypothesis",
+      "content_hash": "",
+      "feed_id": "hn-agentic",
+      "first_seen_at": "2026-11-21T19:59:50.944014+00:00",
+      "title_hash": "8f955b1d1b05",
+      "verdict": "NO_WORKFLOW_DELTA"
+    },
     "6b2d356ac9f7": {
       "canonical_url": "https://simonwillison.net/2026/Nov/18/datasette-arrows",
       "content_hash": "9d45cc45160b",
@@ -298,5 +306,5 @@
     }
   },
   "schema_version": 1,
-  "updated_at": "2026-11-21T05:35:02.595769+00:00"
+  "updated_at": "2026-11-21T19:59:50.944014+00:00"
 }
