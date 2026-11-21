@@ -1,0 +1,222 @@
+name: Automated Signal Radar Ingestion
+
+# Two-job privilege-separated pipeline (dogfooding playbooks/harness-loop-graph.md &
+# templates/undo-price-gating.md):
+# - Job 1 (`ingest-and-triage`): read-only repo access + GEMINI_API_KEY + untrusted web fetch.
+#   Zero git/PR write permissions; LLM calls have ZERO tools enabled.
+# - Job 2 (`stage-and-persist`): write access ONLY for orphan `radar-state` branch and
+#   rolling weekly Draft PRs touching `radar/*.md`. Zero LLM key, zero untrusted web fetches.
+# - Never auto-merges to `main`. Defaults to `observe` mode until repo variable `RADAR_MODE=enforce`.
+
+on:
+  schedule:
+    # Daily sweep at 13:00 UTC (~5:00/6:00 AM PT)
+    - cron: "0 13 * * *"
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "Run mode (use 'bootstrap' on Day 1 to seed seen.json at $0 LLM cost)"
+        type: choice
+        default: observe
+        options:
+          - observe
+          - enforce
+          - bootstrap
+      fast_lane_url:
+        description: "Optional single HTTPS URL for ad-hoc manual triage (owner-only)"
+        type: string
+        required: false
+        default: ""
+
+concurrency:
+  group: radar-pipeline
+  cancel-in-progress: false
+
+permissions: {}
+
+jobs:
+  ingest-and-triage:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout main (read-only)
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Fetch existing radar-state/seen.json (read-only)
+        run: |
+          mkdir -p /tmp/radar-state-read
+          if git fetch --depth=1 origin radar-state 2>/dev/null; then
+            git show FETCH_HEAD:seen.json > /tmp/radar-state-read/seen.json 2>/dev/null || true
+          fi
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@1db35dd8eee11c5894872e0b383ae6c406cf738d # v10.4.0
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: uv sync --no-dev
+
+      - name: Run Stage 0 -> Stage 1 -> Survivor Enricher -> Stage 2
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          STAGE1_MODEL: ${{ vars.STAGE1_MODEL || 'gemini-flash-lite-latest' }}
+          STAGE1_THINKING: ${{ vars.STAGE1_THINKING || 'LOW' }}
+          STAGE2_MODEL: ${{ vars.STAGE2_MODEL || 'gemini-flash-latest' }}
+          STAGE2_THINKING: ${{ vars.STAGE2_THINKING || 'HIGH' }}
+          RADAR_MODE_EFFECTIVE: ${{ github.event_name == 'workflow_dispatch' && inputs.mode || vars.RADAR_MODE || 'observe' }}
+          FAST_LANE_URL: ${{ github.event_name == 'workflow_dispatch' && inputs.fast_lane_url || '' }}
+        run: |
+          mkdir -p .radar-out
+          CMD=(uv run python -m scripts.radar.cli run
+            --mode "$RADAR_MODE_EFFECTIVE"
+            --output .radar-out/run-result.json
+            --summary-out .radar-out/summary.md)
+          if [ -f /tmp/radar-state-read/seen.json ]; then
+            CMD+=(--seen-path /tmp/radar-state-read/seen.json)
+          fi
+          if [ -n "$FAST_LANE_URL" ]; then
+            CMD+=(--url "$FAST_LANE_URL")
+          fi
+          "${CMD[@]}"
+          cat .radar-out/summary.md >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload validated run-result artifact
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: radar-run-result
+          path: |
+            .radar-out/run-result.json
+            .radar-out/summary.md
+          retention-days: 7
+
+  stage-and-persist:
+    needs: ingest-and-triage
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - name: Checkout main
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+
+      - name: Download run-result artifact
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: radar-run-result
+          path: .radar-out
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@1db35dd8eee11c5894872e0b383ae6c406cf738d # v10.4.0
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: uv sync --no-dev
+
+      - name: Prepare orphan radar-state worktree
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          if git ls-remote --exit-code --heads origin radar-state >/dev/null 2>&1; then
+            git fetch origin radar-state
+            git worktree add /tmp/radar-state-wt origin/radar-state
+            git -C /tmp/radar-state-wt checkout -B radar-state origin/radar-state
+          else
+            git worktree add --orphan -b radar-state /tmp/radar-state-wt
+          fi
+
+      - name: Reconcile merged/closed weekly PR telemetry
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          uv run python -m scripts.radar.reconcile_prs reconcile \
+            --repo-root . \
+            --health-path /tmp/radar-state-wt/feed-health.json \
+            --report-out /tmp/radar-state-wt/feed-health-report.md
+
+      - name: Apply validated run-result to radar-state (and compute staging need)
+        id: apply
+        run: |
+          OUT_JSON=$(uv run python -m scripts.radar.cli apply-state \
+            --run-result .radar-out/run-result.json \
+            --seen-path /tmp/radar-state-wt/seen.json \
+            --health-path /tmp/radar-state-wt/feed-health.json)
+          echo "$OUT_JSON"
+          echo "mode=$(echo "$OUT_JSON" | python3 -c 'import json,sys; print(json.load(sys.stdin)["mode"])')" >> "$GITHUB_OUTPUT"
+          echo "iso_week=$(echo "$OUT_JSON" | python3 -c 'import json,sys; print(json.load(sys.stdin)["iso_week"])')" >> "$GITHUB_OUTPUT"
+          echo "staged_count=$(echo "$OUT_JSON" | python3 -c 'import json,sys; print(json.load(sys.stdin)["staged_count"])')" >> "$GITHUB_OUTPUT"
+          echo "has_high_signal=$(echo "$OUT_JSON" | python3 -c 'import json,sys; print(str(json.load(sys.stdin)["has_high_signal"]).lower())')" >> "$GITHUB_OUTPUT"
+
+      - name: Persist updated state to orphan radar-state branch
+        run: |
+          git -C /tmp/radar-state-wt config user.name "github-actions[bot]"
+          git -C /tmp/radar-state-wt config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git -C /tmp/radar-state-wt add seen.json feed-health.json feed-health-report.md
+          if ! git -C /tmp/radar-state-wt diff --cached --quiet; then
+            git -C /tmp/radar-state-wt commit -m "chore(radar-state): update seen and feed telemetry"
+            git -C /tmp/radar-state-wt push origin radar-state
+          fi
+
+      - name: Stage rolling weekly Draft PR (enforce mode & >=1 survivor only)
+        if: steps.apply.outputs.mode == 'enforce' && steps.apply.outputs.staged_count != '0'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ISO_WEEK: ${{ steps.apply.outputs.iso_week }}
+          HAS_HIGH_SIGNAL: ${{ steps.apply.outputs.has_high_signal }}
+        run: |
+          BRANCH_INFO=$(uv run python -m scripts.radar.reconcile_prs choose-branch --iso-week "$ISO_WEEK")
+          BRANCH=$(echo "$BRANCH_INFO" | python3 -c 'import json,sys; print(json.load(sys.stdin)["branch"])')
+          HAS_OPEN_PR=$(echo "$BRANCH_INFO" | python3 -c 'import json,sys; print(str(json.load(sys.stdin)["has_open_pr"]).lower())')
+
+          if [ "$HAS_OPEN_PR" = "true" ] && git ls-remote --exit-code --heads origin "$BRANCH" >/dev/null 2>&1; then
+            git fetch origin "$BRANCH"
+            git checkout -B "$BRANCH" "origin/$BRANCH"
+          else
+            git checkout -B "$BRANCH" origin/main
+          fi
+
+          # Render strictly into radar/YYYY-Www-digest.md (re-applying only digest merge)
+          uv run python -m scripts.radar.cli apply-state \
+            --run-result .radar-out/run-result.json \
+            --seen-path /tmp/radar-state-wt/seen.json \
+            --health-path /tmp/radar-state-wt/feed-health.json \
+            --digest-dir radar
+
+          # Harness Wall: assert ONLY radar/*.md files were modified
+          CHANGED=$(git status --porcelain)
+          if [ -z "$CHANGED" ]; then
+            echo "No net-new digest entries to commit."
+            exit 0
+          fi
+          while IFS= read -r line; do
+            FILE="${line:3}"
+            if [[ "$FILE" != radar/*.md ]]; then
+              echo "ERROR: Harness wall violation — refusing to stage non-radar file: $FILE" >&2
+              exit 1
+            fi
+          done <<< "$CHANGED"
+
+          git add radar/*.md
+          git commit -m "radar(${ISO_WEEK}): stage net-new signal digest"
+          git push -u origin "$BRANCH"
+
+          PR_TITLE="Radar Digest — ${ISO_WEEK}"
+          if [ "$HAS_HIGH_SIGNAL" = "true" ]; then
+            gh label create "high-signal" --color "B60205" --description "Signal radar item scoring >= 9/10" --force || true
+          fi
+
+          if [ "$HAS_OPEN_PR" = "true" ]; then
+            if [ "$HAS_HIGH_SIGNAL" = "true" ]; then
+              gh pr edit "$BRANCH" --add-label "high-signal"
+            fi
+          else
+            PR_ARGS=(--draft --base main --head "$BRANCH" --title "$PR_TITLE" --body-file .radar-out/summary.md)
+            if [ "$HAS_HIGH_SIGNAL" = "true" ]; then
+              PR_ARGS+=(--label "high-signal")
+            fi
+            gh pr create "${PR_ARGS[@]}"
+          fi
