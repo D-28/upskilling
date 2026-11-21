@@ -66,7 +66,7 @@ Classification rules (return ONE verdict per item_id):
 - MODEL_RELEASE_FLUFF: Routine model launch, pricing tweak, benchmark brag, or minor patch with no workflow delta.
 - MARKETING_REBRAND: Buzzword rebrand, engagement-bait thread, or shallow commentary without new engineering substance.
 - NO_WORKFLOW_DELTA: General tech news that does not change harnesses, verification loops, tool execution, or production runtimes.
-- SURVIVOR: Net-new methodology, architectural shift, sharp caveat, or workflow refinement missing from the repository. Set `matched_repo_file` to the closest existing repository file for comparison.
+- SURVIVOR: Net-new methodology, architectural shift, sharp caveat, or workflow refinement missing from the repository. Set `matched_repo_file` to the closest existing repository file for comparison. Example: `playbooks/verification-engineering.md`.
 
 If you are uncertain, return NO_WORKFLOW_DELTA. Passing 0 survivors is a valid outcome. Write `reason` in STE-80 controlled English (<= 20 words, active voice, no semicolons, no filler).
 
