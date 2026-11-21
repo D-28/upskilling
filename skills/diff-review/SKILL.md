@@ -5,12 +5,12 @@ description: Perform an independent, anti-gaming code review by loading REVIEW.m
 
 # Base-Branch Diff Review (`diff-review`)
 
-Use this skill to review a branch, commit, or PR diff independently. It enforces structural separation so a change can never rewrite the rules judging it, and avoids noisy checklists by running only checks triggered by the actual diff.
+Use this skill to review a branch, commit, or PR diff independently. Structural separation prevents a change from rewriting the rules that judge it. Running only diff-triggered checks avoids noisy checklists.
 
 ## Principles
-1. **Changes cannot modify their own checks.** Always read `REVIEW.md` (and any team review rubric) from the **base/default branch**, never from the working tree or PR branch head.
+1. **Changes cannot modify their own checks.** Always read `REVIEW.md` and team rubrics from the **base/default branch**. Never read them from the working tree or PR branch head.
 2. **Review stable commits, not moving targets.** Confirm what commit SHA or diff range is being reviewed and cite it in the output.
-3. **Diff-triggered precision.** Run only the subset of reliability checks whose trigger matches the changed files or constructs (typically 3–10 items), plus core correctness/security checks.
+3. **Diff-triggered precision.** Run only the reliability checks whose trigger matches the changed files or constructs (typically 3–10 items). Always run core correctness and security checks.
 4. **Actionable triage.** Distinguish blocking bugs (`Important`) from optional polish (`Nit`) and unrelated legacy issues (`Pre-existing`).
 
 ---
@@ -24,7 +24,7 @@ Use this skill to review a branch, commit, or PR diff independently. It enforces
    git show origin/main:REVIEW.md 2>/dev/null || git show main:REVIEW.md 2>/dev/null
    ```
    - If `REVIEW.md` was modified in the PR branch itself, flag that modification explicitly for human attention.
-   - If the repo has no `REVIEW.md` on the base branch yet, note that gap and fall back to standard engineering reliability checks (auth/permissions, data loss/migrations, error handling, concurrency, backward compatibility, test evidence).
+   - If the base branch has no `REVIEW.md` yet, note that gap. Fall back to standard reliability checks (`auth/permissions`, `migrations`, `error handling`, `concurrency`, `backward compatibility`, `test evidence`).
 
 ### Step 2: Match Diff-Triggered Reliability Checks
 1. Inspect `git diff --stat <base>...HEAD` and full diff hunks.
@@ -32,7 +32,7 @@ Use this skill to review a branch, commit, or PR diff independently. It enforces
 3. List explicitly **which 3–10 triggered checks** apply to this diff (and skip unrelated rules).
 
 ### Step 3: Incorporate Prior Review Context (If Multi-Round)
-If previous review comments, failed verification outputs, or prior findings are provided in the prompt/PR, review them first to verify whether earlier `Important` items were genuinely fixed or introduced regressions—rather than re-reviewing blindly from scratch.
+If the prompt or PR includes prior review comments or failed checks, review them first. Verify whether earlier `Important` items were genuinely fixed or introduced regressions. Do not re-review blindly from scratch.
 
 ### Step 4: Inspect Code & Verification Evidence
 Check:

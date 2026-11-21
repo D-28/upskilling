@@ -65,6 +65,19 @@ Prose rules work until the day an agent ignores them. Write every critical invar
 
 Over time, past incidents turn into permanent infrastructure that future agents (and newer models) cannot accidentally violate (`[C]`).
 
+### Instruction Grammar: `STE-80` for `AGENTS.md` & `SKILL.md` (`[H]`)
+A human who hits an ambiguous sentence in a runbook can ask a clarifying question; an unattended agent loading `AGENTS.md` or `SKILL.md` picks a reading and acts on it (`[H]`). Applying the structural rules of **ASD-STE100 ("STE-80")** (`[H]`) attacks the #1 instruction-following failure mode—compound sentences with buried conditions:
+
+| Anti-Pattern (Compound & Buried Trigger) | `STE-80` Rewrite (Condition First, 1 Action per Sentence) |
+|---|---|
+| *"Review the diff and fix the failing test, halting the run and reporting to the user if executed code touches credentials or files outside `/tmp`."* (1 checkbox, 4 jobs, trigger buried at the end) | `1.` If executed code touches credentials or files outside `/tmp`, stop the run immediately.<br>`2.` Report to the user what was attempted.<br>`3.` Otherwise, review the diff.<br>`4.` Fix the failing test. |
+
+Enforce four structural constraints on `AGENTS.md`, `SKILL.md`, and `REVIEW.md`—and verify them deterministically with [`scripts/ste_lint.py`](../scripts/ste_lint.py) (`[H]`, `[C]`):
+1. **One name for one thing (Rule 1.11):** Anchor every entity, file, or concept to `GLOSSARY.md` (`[G]`, `[H]`). Never rotate synonyms (`config` vs. `settings`).
+2. **One instruction per sentence (Rule 5.2):** Split sequential actions into separate numbered imperatives (`"Run the linter."`, not `"the linter should be run"`).
+3. **Condition first (Rule 5.4):** Put the trigger before the action (`"If the check fails, read the log."`).
+4. **Split, do not trim (Rule 5.1):** Keep instructions `<= 20` words and descriptions `<= 25` words (excluding code spans). Never delete conditions or rationale to hit the limit; keep the rationale as a separate descriptive sentence (`[H]`).
+
 ---
 
 ## 3. Layer 2 — Loop (Evidence)
@@ -147,16 +160,18 @@ See [`templates/undo-price-gating.md`](../templates/undo-price-gating.md) for a 
 
 ---
 
-## 6. Failure-to-Layer Diagnostic Matrix (`[C]`)
+## 6. Failure-to-Layer Diagnostic Matrix (`[C]`, `[H]`)
 
 Check symptoms **from top to bottom** and fix the first matching layer:
 
 | Symptom | Broken Layer | Concrete Fix |
 |---|---|---|
 | You copy-paste logs/commands between chat and terminal | **Harness (Tools)** | Give agent direct read-only tool / CLI access |
+| Agent follows half a rule in `AGENTS.md`/`SKILL.md` or misses a conditional trigger | **Harness (Instruction Grammar `[H]`)** | Split compound steps into condition-first, single-action sentences (`<=20` words) and check with [`scripts/ste_lint.py`](../scripts/ste_lint.py) |
 | Agent repeats approaches it already tried earlier | **Harness (Memory)** | Persist dead ends & state in `PROGRESS.md` / disk |
 | Agent says `"Done!"` when feature/tests are broken | **Loop (Check)** | Require deterministic/E2E check before completion |
 | Retries burn tokens repeating the exact same error | **Loop (Feedback + Exits)** | Emit `EXPECTED vs SAW`, cap retries at 3, add same-result-twice exit |
+| Human reviewer drowns in verbose paragraphs explaining a diff or system | **Loop / Review Bandwidth (`[H]`)** | Escalate up the 4-Level Understanding Ladder (`STE-80` → Mermaid Diagram → Throwaway Interactive HTML) |
 | Every step works, but the whole run takes forever | **Graph (Shape)** | Run the Early-Start Test and parallelize independent edges |
 | One late failure forces everything to rerun from scratch | **Graph (Gates)** | Freeze passed node outputs as read-only; rerun only failed node |
 | The exact same class of mistake returns every week | **All Layers (Learning)** | Turn the lesson into a Harness wall/tool, CI check, or Graph gate—never just a prompt sentence |
@@ -170,12 +185,12 @@ Check symptoms **from top to bottom** and fix the first matching layer:
 
 ---
 
-## 7. Pre-Flight Checklist (`[C]`)
+## 7. Pre-Flight Checklist (`[C]`, `[H]`)
 
-- **Harness:** `done_when` defined? Root `AGENTS.md` is a short map? Tools narrow with explicit failure states? State saved on disk/git? Running in sandbox/worktree? Tool calls traced?
-- **Loop:** Failing check written before code? Feedback shows `EXPECTED` vs `SAW`? Retry cap & token budget enforced? Same-result-twice triggers human escalation?
+- **Harness:** `done_when` defined? Root `AGENTS.md` is a short map written in `STE-80` (`python3 scripts/ste_lint.py --check`)? Tools narrow with explicit failure states? State saved on disk/git? Running in sandbox/worktree? Tool calls traced?
+- **Loop:** Failing check written before code? Feedback shows `EXPECTED` vs `SAW`? Retry cap & token budget enforced? Same-result-twice triggers human escalation? Output format matched to human comprehension bottleneck (`STE-80` / diagram / interactive HTML)?
 - **Graph:** Tried single loop first? Every edge passed Early-Start Test? Each worker has isolated context? Passed nodes frozen? Gates priced by undo cost?
 
 ---
 
-*Related: [`playbooks/verification-engineering.md`](verification-engineering.md) · [`templates/AGENTS.md.template`](../templates/AGENTS.md.template) · [`templates/undo-price-gating.md`](../templates/undo-price-gating.md)*
+*Related: [`playbooks/verification-engineering.md`](verification-engineering.md) · [`skills/ste-clarity/SKILL.md`](../skills/ste-clarity/SKILL.md) · [`scripts/ste_lint.py`](../scripts/ste_lint.py) · [`templates/AGENTS.md.template`](../templates/AGENTS.md.template) · [`templates/undo-price-gating.md`](../templates/undo-price-gating.md)*

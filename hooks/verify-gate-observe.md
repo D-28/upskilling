@@ -76,7 +76,7 @@ exit 1
 ## 3. Adapting to Agent CLI Lifecycle Hooks
 
 ### GitHub Copilot CLI (`.github/hooks/hooks.json` or lifecycle hooks)
-- Use `preToolUse` hooks to block destructive `NO UNDO` actions outside approved scopes (`[C]`), and `postToolUse` / `sessionEnd` (or pre-PR scripts) to run cheap deterministic checks (`lint`, `typecheck`, `unit`) before opening a PR (`[B]`).
+- Use `preToolUse` hooks to block destructive `NO UNDO` actions outside approved scopes (`[C]`), and `postToolUse` / `sessionEnd` (or pre-PR scripts) to run cheap deterministic checks (`lint`, `typecheck`, `unit`, plus `python3 scripts/ste_lint.py --check` when `AGENTS.md` or `SKILL.md` files change `[H]`) before opening a PR (`[B]`).
 - Pair with `.githooks/commit-msg` above so every commit created by Copilot CLI automatically picks up the `observe → enforce` provenance check.
 
 ### Claude Code (`PreToolUse` + Code Mode Warning `[D]`)

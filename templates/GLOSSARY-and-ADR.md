@@ -1,12 +1,12 @@
 # Domain Artifacts: Glossary, ADRs & Tracer-Bullet Tickets
 
-> **Why these exist (`[G]`, `[C]`):** Context windows degrade past ~100K–150K tokens of noisy history (*the Dumb Zone*). Writing agreed domain terms, architecture decisions, and vertical slices to disk lets any fresh agent session implement cleanly from the **Smart Zone** without guessing or re-litigating decisions (`[G]`).
+> **Why these exist (`[G]`, `[C]`, `[H]`):** Context windows degrade past `~100K–150K` tokens of noisy history (*the Dumb Zone*). Write agreed domain terms, architecture decisions, and vertical slices to disk. Any fresh agent session can then implement cleanly from the **Smart Zone** without guessing (`[G]`).
 
 ---
 
-## 1. `GLOSSARY.md` Template (`[G]`)
+## 1. `GLOSSARY.md` Template (`[G]`, `[H]`)
 
-Use this to prevent agents (and teammates) from calling the same concept three different names across schema, API, and UI.
+Use this table to enforce ASD-STE100 Rule 1.11 (*"One name for one thing"* `[H]`). Prevent agents and teammates from rotating synonyms across schema, API, prompts, and UI.
 
 ```markdown
 # Project Glossary
@@ -22,7 +22,7 @@ Use this to prevent agents (and teammates) from calling the same concept three d
 
 ## 2. Lightweight ADR Template (`docs/adr/NNN-short-title.md`) (`[G]`)
 
-Keep Architecture Decision Records to **one screen**—capture *why* a path was chosen so future agent sessions stop suggesting rejected alternatives.
+Keep Architecture Decision Records to **one screen**. Capture *why* a path was chosen so future agent sessions stop suggesting rejected alternatives.
 
 ```markdown
 # ADR-NNN: <Short Decision Title>
@@ -50,7 +50,7 @@ Keep Architecture Decision Records to **one screen**—capture *why* a path was 
 
 ## 3. Vertical "Tracer-Bullet" Ticket Template (`[G]`, `[C]`)
 
-Instead of horizontal tickets (*"Create all DB tables" → "Build all API routes" → "Build UI"*), slice **vertically** so every ticket cuts thin end to end, fits inside **one fresh session**, and has an unambiguous `done_when` check.
+Do not create horizontal tickets (`"Create all DB tables" -> "Build all API routes" -> "Build UI"`). Slice **vertically** so every ticket cuts thin end to end. Each ticket must fit inside **one fresh session** and have an unambiguous `done_when` check.
 
 ```markdown
 # Ticket <N>: <Thin End-to-End Slice Title>

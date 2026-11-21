@@ -17,14 +17,14 @@
 ## 2. How to Apply This in Two Contexts
 
 ### A. Inside Engineering Teams (Staff SWE / Org Playbook) (`[B]`, `[C]`)
-- **Stop treating a typo fix and a billing migration with the same ceremony (`[C]`).** Reviewing `ONE-CLICK UNDO` diffs line-by-line wastes senior bandwidth; direct human review energy toward `CLEANUP UNDO` trace audits and `NO UNDO` sign-offs (`[B]`, `[C]`).
-- **Enforce separation of duties (`[C]`):** Never allow the agent that planned and wrote a `Tier 2` or `Tier 3` change to approve its own risk or modify its own `REVIEW.md` / CI checks (`[B]`, `[C]`).
+- **Match review depth to undo cost (`[C]`):** Do not treat a typo fix and a billing migration with the same ceremony. Reviewing `ONE-CLICK UNDO` diffs line by line wastes senior bandwidth. Direct human review energy toward `CLEANUP UNDO` trace audits and `NO UNDO` sign-offs (`[B]`, `[C]`).
+- **Enforce separation of duties (`[C]`):** The agent that wrote a `Tier 2` or `Tier 3` change must never approve its own risk. It also must never modify its own `REVIEW.md` or CI checks (`[B]`, `[C]`).
 
 ### B. Inside Customer-Facing Production Agents (FDE / FDSE Playbook) (`[C]`, `[E]`)
 Map every tool exposed to your production agent to one of the three tiers *before* writing prompts:
-- **Read / Compute tools** → `ONE-CLICK UNDO` (allowed automatically inside sandbox).
-- **Draft / Stage tools** (create draft PR, stage draft email, write to isolated staging table) → `CLEANUP UNDO` (allowed with validation + trace).
-- **Commit / Send / Mutate Prod tools** (send customer message, issue refund, run destructive SQL, trigger deploy) → `NO UNDO` (enforced by **Harness Walls** outside the model `[C]`: tool returns a pending approval request that pauses until a human clicks approve).
+- **Read / Compute tools:** Map to `ONE-CLICK UNDO`. Allow execution automatically inside the sandbox.
+- **Draft / Stage tools:** Map to `CLEANUP UNDO` (`create draft PR`, `stage draft email`, `write to staging table`). Allow execution with validation and trace recording.
+- **Commit / Send / Mutate Prod tools:** Map to `NO UNDO` (`send customer message`, `issue refund`, `run destructive SQL`, `trigger deploy`). Enforce **Harness Walls** outside the model (`[C]`). The tool must return a pending approval request and pause until a human clicks approve.
 
 ### C. Unattended / Scheduled Runs (Fail-Closed Staging)
-When a background or scheduled agent encounters a gated side effect with no human available, it must **fail closed**—never hang waiting for interactive approval and never bypass the gate. Deny the execution, write the prepared draft, diff, or payload to a staging/review queue, and surface it in the next interactive summary for explicit human sign-off.
+If a background agent hits a gated side effect with no human present, fail closed immediately. Never hang waiting for interactive approval and never bypass the gate. Deny execution and write the prepared draft, diff, or payload to a staging queue. Surface the staged item in the next summary for explicit human sign-off.

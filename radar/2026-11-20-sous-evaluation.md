@@ -2,24 +2,24 @@
 
 - **Captured:** `2026-11-20`
 - **Revisit / Prune By:** `2027-02-18` (90 days — aligned with quarterly review in [`todo.md`](../todo.md))
-- **Target Evaluated:** [`sous-io/sous`](https://github.com/sous-io/sous) (`@sous-io/sous` v1.1.2, Apache-2.0; docs at `https://sous.io/markdown/#/`; official recipes at [`sous-io/sous-recipes`](https://github.com/sous-io/sous-recipes))
-- **Status:** **Evaluated — Skip CLI adoption; hold 3 durable concepts in `radar/`.** Do **not** edit `playbooks/`, `skills/`, or `templates/` until these patterns are validated by real workflow friction.
+- **Target Evaluated:** [`sous-io/sous`](https://github.com/sous-io/sous) (`@sous-io/sous` v1.1.2, Apache-2.0). Docs live at `https://sous.io/markdown/#/` and recipes at [`sous-io/sous-recipes`](https://github.com/sous-io/sous-recipes).
+- **Status:** **Evaluated — Skip CLI adoption and hold 3 durable concepts in `radar/`.** Do **not** edit `playbooks/`, `skills/`, or `templates/` until real workflow friction validates these patterns.
 
 ---
 
 ## 1. Executive Verdict
 
-- **Adopt the CLI today?** **No (`Skip / Watch`).** As of Nov 2026, `sous` is a **3-star, single-maintainer** (1 contributor, 39 workspace packages, Node ≥ 22) tool with only **one production-tested harness (Claude Code on Linux)**. Its Codex plugin is explicitly marked *"Untested"*, Windows is unsupported, and **GitHub Copilot CLI / Antigravity are not supported**. Its default of gitignoring compiled outputs also conflicts with cloud agents and base-branch CI checks.
-- **Strict Signal Calibration (`todo.md` §3 rubric):** **5/10 overall** (high engineering craft and zero hype, but solo-maintained with no external production case studies or empirical agent evals).
-- **Why it still earns a `radar/` note:** It exposes a real **org-scale Staff SWE problem** that frontier models do *not* magically eliminate—how to distribute, parameterize, and version-pin agent configuration across dozens of repositories—and clarifies *where* configuration tooling fits inside our **Harness / Loop / Graph** mental model.
+- **Adopt the CLI today?** **No (`Skip / Watch`).** As of Nov 2026, `sous` is a **3-star, single-maintainer** tool (`1` contributor, `39` packages, `Node >= 22`). It has only **one production-tested harness** (Claude Code on Linux). Its Codex plugin is marked *"Untested"*, Windows is unsupported, and **GitHub Copilot CLI / Antigravity are not supported**. Its default of gitignoring compiled outputs also conflicts with cloud agents and base-branch CI checks.
+- **Strict Signal Calibration (`todo.md` §3 rubric):** **5/10 overall.** It shows high engineering craft and zero hype. However, it is solo-maintained with no external production case studies or empirical agent evals.
+- **Why it still earns a `radar/` note:** It highlights a real **org-scale Staff SWE problem** that frontier models do not eliminate. Teams still must distribute, parameterize, and version-pin agent configuration across dozens of repositories. It also clarifies where configuration tooling fits inside our **Harness / Loop / Graph** architecture.
 
 ---
 
 ## 2. Where `sous` Sits in the Harness / Loop / Graph Architecture
 
-The easiest way to avoid confusion about `sous` is to see what it is **not**: it is **not** a runtime agent, **not** a verification **Loop**, and **not** an orchestration **Graph**.
+To avoid confusion about `sous`, first note what it is **not**. It is **not** a runtime agent, **not** a verification **Loop**, and **not** an orchestration **Graph**.
 
-It sits **outside and before** the runtime stack as a **Layer 0: Pre-Flight Harness Provisioner**—building and validating Layer 1 (*Harness*) files on disk *before* any coding agent session launches:
+It sits **outside and before** the runtime stack as a **Layer 0: Pre-Flight Harness Provisioner**. It builds and validates Layer 1 (*Harness*) files on disk *before* any coding agent session starts:
 
 ```text
 LAYER 0: PRE-FLIGHT HARNESS PROVISIONING  ◀── WHERE `sous` (OR COPIER / INSTALLERS) LIVES
@@ -53,7 +53,7 @@ LAYER 0: PRE-FLIGHT HARNESS PROVISIONING  ◀── WHERE `sous` (OR COPIER / IN
 
 ## 3. Practical Use Cases: The 3-Tier Multi-Repo Scaling Ladder
 
-Whether compile-time templating (LiquidJS / Jinja / Copier) helps or hurts across "dozens of repos" depends entirely on **who owns those repos** and **how much combinatorial variance** they have:
+Compile-time templating (`LiquidJS`, `Jinja`, `Copier`) helps in some multi-repo setups and hurts in others. The right choice depends on **repo ownership** and **combinatorial variance**:
 
 | Tier | Practical Context | Best Approach | Why |
 |---|---|---|---|
@@ -67,7 +67,7 @@ Whether compile-time templating (LiquidJS / Jinja / Copier) helps or hurts acros
    - *Do:* Clone the repo and immediately run your user-scoped `/grill-to-spec` and `/verify` skills. Let the agent discover `pytest` / `pyproject.toml` at runtime.
    - *Don't:* Introduce a template compiler or `.sous/` config into a repo you don't own long-term.
 2. **Staff SWE rolling out a new Go + HIPAA diff-review rule across 35 microservices (Tier 3):**
-   - *Do:* Maintain a central org template repo parameterized by `{ stack, compliance, serviceName }`. Render committed `AGENTS.md` / `REVIEW.md` / `.github/skills/` across matching repos via automated PRs, with a CI drift check ensuring nobody silently forks generated sections. Non-Go / non-HIPAA repos never pay context tokens for rules that don't apply to them.
+   - *Do:* Maintain a central org template repo parameterized by `{ stack, compliance, serviceName }`. Render committed `AGENTS.md`, `REVIEW.md`, and `.github/skills/` across matching repos via automated PRs. Add a CI drift check so nobody forks generated sections silently. Non-Go / non-HIPAA repos never pay context tokens for rules that don't apply to them.
    - *Don't:* Gitignore the rendered files (breaks GitHub web browsing, cloud agents, and base-branch CI `REVIEW.md` loading).
 3. **Developer noticing `AGENTS.md` creeping to 40 KB or an internal CLI hanging agents (Any Tier):**
    - *Do:* Add a 3-line CI byte-size check on `AGENTS.md` / `REVIEW.md` and add `--yes` / flag parity to internal CLIs. You get the value directly without adopting `sous`.
@@ -79,14 +79,14 @@ Whether compile-time templating (LiquidJS / Jinja / Copier) helps or hurts acros
 Keep these **in reserve** here rather than adding speculative prose to `playbooks/` or `templates/` today:
 
 1. **The 3-Tier Multi-Repo Scaling Ladder + "Commit Rendered Outputs" Rule:**
-   - Global self-adapting skills (Tier 1) → plain synced `SKILL.md` (Tier 2) → templated org config with **committed outputs + CI drift check** (Tier 3).
+   - Start with global self-adapting skills (Tier 1) or plain synced `SKILL.md` files (Tier 2). Use templated org config with **committed outputs and a CI drift check** at org scale (Tier 3).
 2. **Automated Size/Token Budget Assertions on Context Files (`Write It Twice` for `AGENTS.md`):**
-   - Pair *"keep root `AGENTS.md` short"* with a deterministic CI byte/token cap so context bloat fails CI before pushing sessions into the Dumb Zone.
+   - Pair *"keep root `AGENTS.md` short"* with a deterministic CI byte or token cap. Context bloat then fails CI before pushing sessions into the Dumb Zone.
    - *Concrete harness quirks documented by `sous` (snapshot as of Nov 2026):*
      - **Codex** silently truncates combined project instruction files at **32 KiB** (`project_doc_max_bytes`).
-     - **Claude Code** loads `.claude/rules/*.md` alongside `CLAUDE.md` without silencing `AGENTS.md` (whereas adding a root `CLAUDE.md` causes Claude Code to ignore `AGENTS.md`).
+     - **Claude Code** loads `.claude/rules/*.md` alongside `CLAUDE.md` without silencing `AGENTS.md`. Adding a root `CLAUDE.md`, however, causes Claude Code to ignore `AGENTS.md`.
 3. **Non-Interactive / TTY-Free CLI Parity for Agent Tools (`L4`):**
-   - Every interactive prompt in a tool or wrapper script must have a flag/argument equivalent and fail fast with the exact non-interactive command when run without a TTY—eliminating silent stdin hangs in agent loops.
+   - Give every interactive prompt in a tool or wrapper script a flag or argument equivalent. If run without a TTY, fail fast and print the exact non-interactive command. This prevents silent `stdin` hangs in agent loops.
 
 ---
 
@@ -104,6 +104,6 @@ Keep these **in reserve** here rather than adding speculative prose to `playbook
 
 ## 6. Revisit & Promotion Triggers (`2027-02-18`)
 
-- **Promote the 3 reserve patterns into `playbooks/` / `templates/` only if** you hit them in real work (e.g., an agent hangs on an interactive CLI, a repo's `AGENTS.md` bloats past a practical cap, or you actually manage shared agent config across 10+ owned repos).
-- **Re-evaluate `@sous-io/sous` itself only if** it adds real multi-harness adoption (Copilot CLI, tested Codex, cross-platform macOS/Windows), supports a committed-output + CI-check mode, and gains broader community/production traction.
+- **Promote the 3 reserve patterns into `playbooks/` or `templates/` only if real work triggers them.** Examples include an agent hanging on an interactive CLI, `AGENTS.md` bloating past a cap, or managing 10+ owned repos.
+- **Re-evaluate `@sous-io/sous` only if it adds multi-harness support** (`Copilot CLI`, tested `Codex`, `macOS/Windows`). Also require a committed-output CI mode and broader production adoption.
 - **Otherwise:** Prune or archive this note during the `2027-02-18` quarterly review.
