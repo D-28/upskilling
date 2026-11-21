@@ -5,13 +5,13 @@ description: Run end-to-end runtime verification against the actual running appl
 
 # Runtime Verification (`verify`)
 
-Use this skill whenever a code change is ready to verify, before opening a PR, or when asked to confirm a feature or bug fix actually works. Do **not** rely on self-report ("looks good", "should pass") or unit mocks alone.
+Use this skill when a code change is ready to verify or before opening a PR. Also use it to confirm a feature or bug fix actually works. Do **not** rely on self-report ("looks good", "should pass") or unit mocks alone.
 
 ## Principles
 1. **Verification means running the real change.** Static unit tests can pass while the user-facing feature is broken. Boot the service, drive the UI/CLI/API end to end, and inspect real outputs.
 2. **Loop on evidence, not confidence.** Every claim must cite a command run, exit code, observed output, or visual/DOM inspection.
-3. **Hard exits prevent token burn.** Stop and escalate to a human after **3 failed repair attempts** or as soon as the **exact same failure repeats twice** (`dead_ends`).
-4. **Never fake green.** Never add `sleep()`, skip flaky tests, or weaken assertions to make a check pass. If a test is genuinely flaky and its root cause cannot be found, remove or quarantine it only with explicit human confirmation and document why.
+3. **Hard exits prevent token burn.** If 3 repair attempts fail, or if the exact same failure repeats twice (`dead_ends`), stop and escalate to a human.
+4. **Never fake green.** Never add `sleep()`, skip flaky tests, or weaken assertions to make a check pass. If a flaky test's root cause cannot be found, ask a human before removing or quarantining it. Always document the reason.
 
 ---
 
@@ -28,10 +28,10 @@ Run the repository's fast checks (typecheck, lint, build, targeted unit/property
 
 ### Step 3: Execute End-to-End Runtime Verification
 Pick the runtime harness matching the change:
-- **Web UI:** Boot the dev/preview server and drive the real user flow via browser tooling / Chrome DevTools Protocol (CDP), checking console errors, network status, and rendered state.
-- **Backend / API:** Start the local server cleanly (or use an ephemeral test harness) and send real HTTP/RPC requests asserting status codes, payloads, and persisted side effects.
+- **Web UI:** Boot the dev or preview server and drive the real user flow via browser tooling (`CDP`). Check console errors, network status, and rendered state.
+- **Backend / API:** Start the local server cleanly (or use an ephemeral test harness). Send real HTTP/RPC requests asserting status codes, payloads, and persisted side effects.
 - **CLI / Library:** Execute the actual CLI binary/entrypoint against realistic inputs and inspect exit codes, stdout/stderr, and generated files.
-- **Data / Migrations / Rewrites:** Run **property-based tests** (`fast-check`, `Hypothesis`, `proptest` — round-trip, invariants, idempotency, equivalence) and/or **differential checks** comparing old vs. new output on identical sampled inputs.
+- **Data / Migrations / Rewrites:** Run **property-based tests** (`fast-check`, `Hypothesis`, `proptest` for round-trip, invariants, idempotency, equivalence). For migrations, run **differential checks** comparing old vs. new output on sampled inputs.
 
 ### Step 4: Repair Loop with Structured Feedback (Max 3 Rounds)
 Track a `dead_ends` list across attempts. On any failure, record:
@@ -48,7 +48,7 @@ DEAD ENDS   <approaches already tried that failed>
 - You hit **3 failed repair rounds** on the same issue, OR
 - `SAW` matches an entry already in `DEAD ENDS` (same failure twice).
 
-When escalating, stop editing code and report the exact `FAILED / EXPECTED / SAW / DEAD ENDS` state plus what missing tool, visibility, or human decision is blocking progress.
+When escalating, stop editing code and report the exact `FAILED / EXPECTED / SAW / DEAD ENDS` state. State what missing tool, visibility, or human decision is blocking progress.
 
 ### Step 5: Emit Verification Evidence
 Output a concise evidence summary (never just "all tests pass"):

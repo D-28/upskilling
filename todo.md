@@ -18,10 +18,11 @@ A living tracker for ideas, hands-on experiments, toolkit upgrades, and Staff SW
 
 ## 2. Repo & Toolkit Backlog (Concrete Builds)
 
+- [x] **Two-way `STE-80` clarity skill & deterministic linter (`[H]`, `[C]`, `[D]`):** Built [`skills/ste-clarity/SKILL.md`](skills/ste-clarity/SKILL.md) (Karpathy's 4-Level Understanding Ladder + `STE-80` instruction audit) and [`scripts/ste_lint.py`](scripts/ste_lint.py) (`--stats`, `--check`, `--json`), refactoring all `skills/*/SKILL.md` and `templates/*` to `100%` STE compliance (`0` errors, `0` warnings).
 - [ ] **Cross-machine installer (`scripts/install-skills.sh`):** Build an idempotent script that symlinks or copies [`skills/`](skills/verify/SKILL.md) into Antigravity, GitHub Copilot CLI (`.github/skills/` or `~/.copilot/skills/`), Claude Code (`.claude/skills/`), and Codex on any personal or work laptop.
 - [ ] **Stress-test `/verify` (`[B]`):** Trial [`skills/verify/SKILL.md`](skills/verify/SKILL.md) on a real personal project in Antigravity (using Chrome DevTools MCP or local API checks) and refine a Copilot CLI-friendly adaptation for work repos.
 - [ ] **Roll out `observe`-mode commit gate (`[B]`):** Test the `.githooks/commit-msg` starter script from [`hooks/verify-gate-observe.md`](hooks/verify-gate-observe.md) in `observe` mode on a real repo, measure false positives, and test toggling `enforce` with the 2-block escape hatch.
-- [ ] **Code-Mode-style helper wrappers (`[D]`):** Create lightweight deterministic wrapper scripts (`scripts/`) that aggregate/filter noisy git, test, and API/MCP outputs into crisp JSON summaries—capturing [`playbooks/programmatic-tooling-mcp.md`](playbooks/programmatic-tooling-mcp.md) savings inside enterprise GitHub Copilot CLI environments where experimental Code Mode isn't available.
+- [ ] **Code-Mode-style helper wrappers (`[D]`):** Create lightweight deterministic wrapper scripts (`scripts/`, extending the `--json` pattern in [`scripts/ste_lint.py`](scripts/ste_lint.py)) that aggregate/filter noisy git, test, and API/MCP outputs into crisp JSON summaries—capturing [`playbooks/programmatic-tooling-mcp.md`](playbooks/programmatic-tooling-mcp.md) savings inside enterprise GitHub Copilot CLI environments where experimental Code Mode isn't available.
 - [ ] **Runnable property & differential test starters (`[B]`):** Add minimal copy-paste examples of:
   - Property-based tests (`fast-check` for TS/JS, `Hypothesis` for Python) covering round-trip, invariant, idempotency, and equivalence.
   - Differential test harness comparing legacy vs. migrated implementations on sampled inputs.
@@ -47,7 +48,7 @@ Goal: catch leading-edge agentic engineering shifts within ~24h without X-scroll
   - *Thresholds:* `< 6` DROP · `6–8` STAGE into rolling Draft PR · `9–10` STAGE + `high-signal` label.
 - [ ] Create checked-in `feeds.yaml` covering official engineering blogs/changelogs (Anthropic/`claude.dev`, GitHub/Copilot CLI, OpenAI/Codex, Google/Antigravity), GitHub `releases.atom` feeds, YouTube channel Atom feeds, and 2–4 curated practitioner RSS/HN feeds.
 - [ ] Build a compact `REPO_INVENTORY` generator (~1.5–2K tokens summarizing existing coverage across `playbooks/`, `templates/`, `skills/`, and `todo.md`) so Stage 1 gets a stable, high-hit-rate prompt cache prefix without dumping the whole repo into context (`[F]`, `[G]`).
-- [ ] Create an offline **replay calibration fixture** from [`radar/2026-11-18-digest.md`](radar/2026-11-18-digest.md) (**A–G**) + 3–5 known hype/redundant articles: verify 0% false-positive bloat against current `playbooks/`, high recall when a playbook is withheld, and benchmark **Gemini Flash (high thinking)** vs. **Gemini Pro** on Stage 2 (`[B]`, `[F]`).
+- [ ] Create an offline **replay calibration fixture** from [`radar/2026-11-18-digest.md`](radar/2026-11-18-digest.md) (**A–H**) + 3–5 known hype/redundant articles: verify 0% false-positive bloat against current `playbooks/`, high recall when a playbook is withheld, and benchmark **Gemini Flash (high thinking)** vs. **Gemini Pro** on Stage 2 (`[B]`, `[F]`).
 
 ### Phase 1 — Deterministic Stage 0 Fetcher, Sanitizer & State Store (`[C]` 4 Cuts #3, `[D]`)
 - [ ] Build a deterministic Python Stage 0 script (0 LLM tokens) to fetch feeds with pinned URLs, strict HTTP timeouts, response size limits, HTML-to-text stripping, URL canonicalization (strip UTM/tracking params), and cross-source deduplication (`canonical_url` + content/title hash).
@@ -75,9 +76,9 @@ Goal: catch leading-edge agentic engineering shifts within ~24h without X-scroll
 ## 4. Research Angles by Career Track
 
 ### A. Staff SWE Track (Org-Wide Engineering Leverage)
-- [ ] **Verification at scale (`[B]`):** How to roll out base-branch `REVIEW.md` + diff-triggered reliability checklists across multi-team monorepos without slowing down senior reviewers.
+- [ ] **Verification at scale (`[B]`, `[H]`):** How to roll out base-branch `REVIEW.md` + diff-triggered reliability checklists + `STE-80` PR summaries across multi-team monorepos without slowing down senior reviewers.
 - [ ] **Empirical reviewer evals (`[B]`):** Design a lightweight metric loop tracking reverted PRs, maintainer rejections, and size-matched clean controls—plus the ≥2-PR / 3-agent-disprove rule promotion pipeline.
-- [ ] **"Write It Twice" enforcement (`[C]`):** Catalog high-value architectural invariants (import boundaries, PII log redaction, test-skip bans) that should move out of prose `AGENTS.md` into deterministic lint/CI checks.
+- [ ] **"Write It Twice" enforcement (`[C]`, `[H]`):** Catalog high-value architectural invariants (import boundaries, PII log redaction, test-skip bans, `scripts/ste_lint.py` checks on `AGENTS.md`/`SKILL.md`) that should move out of prose into deterministic lint/CI checks.
 - [ ] **Stacked diffs for high-velocity AI PRs (`[G]`):** Evaluate stacked-PR workflows (`gh` / Graphite / git worktrees) to keep human review manageable when agents write large slices.
 
 ### B. FDE / FDSE Track (Production Customer Systems)
