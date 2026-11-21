@@ -136,12 +136,28 @@
       "title_hash": "7dc58de858db",
       "verdict": "BOOTSTRAP_SEEDED"
     },
+    "8145fefb47ff": {
+      "canonical_url": "https://openai.com/business/customer-stories/hebbia",
+      "content_hash": "62bb79629dc5",
+      "feed_id": "openai-news",
+      "first_seen_at": "2026-11-21T05:01:36.109769+00:00",
+      "title_hash": "c4ed2a1d9d05",
+      "verdict": "BOOTSTRAP_SEEDED"
+    },
     "82b169450b02": {
       "canonical_url": "https://simonwillison.net/2026/Nov/17/gpt62-astra-and-sol",
       "content_hash": "1520fdaed29e",
       "feed_id": "simon-willison",
       "first_seen_at": "2026-11-21T04:33:41.263719+00:00",
       "title_hash": "d4876add9ee8",
+      "verdict": "BOOTSTRAP_SEEDED"
+    },
+    "82fe289fe466": {
+      "canonical_url": "https://openai.com/business/learn/codex-security-plugin-demo",
+      "content_hash": "9abe6cb39035",
+      "feed_id": "openai-news",
+      "first_seen_at": "2026-11-21T05:01:36.109769+00:00",
+      "title_hash": "268c6c3a657d",
       "verdict": "BOOTSTRAP_SEEDED"
     },
     "8427d4fee9a7": {
@@ -184,6 +200,14 @@
       "title_hash": "cbb0b523eeae",
       "verdict": "BOOTSTRAP_SEEDED"
     },
+    "9342dbf934e4": {
+      "canonical_url": "https://openai.com/index/how-openai-performance-factory-keeps-chatgpt-fast",
+      "content_hash": "0dd0c47d788f",
+      "feed_id": "openai-news",
+      "first_seen_at": "2026-11-21T05:01:36.109769+00:00",
+      "title_hash": "1ee26324e5d4",
+      "verdict": "BOOTSTRAP_SEEDED"
+    },
     "a8c812cefc0f": {
       "canonical_url": "https://www.masteringemacs.org/article/announcing-dreamcoder",
       "content_hash": "",
@@ -214,6 +238,14 @@
       "feed_id": "openai-codex-releases",
       "first_seen_at": "2026-11-21T04:33:41.263719+00:00",
       "title_hash": "a44d3e58e3ee",
+      "verdict": "BOOTSTRAP_SEEDED"
+    },
+    "c1a2af93db54": {
+      "canonical_url": "https://openai.com/index/introducing-medchembench",
+      "content_hash": "e9d986616656",
+      "feed_id": "openai-news",
+      "first_seen_at": "2026-11-21T05:01:36.109769+00:00",
+      "title_hash": "67e152403a4d",
       "verdict": "BOOTSTRAP_SEEDED"
     },
     "e45fd791e1fe": {
@@ -266,5 +298,5 @@
     }
   },
   "schema_version": 1,
-  "updated_at": "2026-11-21T04:33:41.263719+00:00"
+  "updated_at": "2026-11-21T05:01:36.109769+00:00"
 }
