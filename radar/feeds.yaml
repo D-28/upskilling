@@ -40,6 +40,7 @@ default_agentic_keywords:
   - review.md
   - diff-triggered
   - managed agents
+  - karpathy
 
 feeds:
   - id: anthropic-engineering
@@ -131,6 +132,22 @@ feeds:
     category: vendor
     max_items: 10
     use_default_keywords: true
+
+  - id: karpathy-bearblog
+    name: Andrej Karpathy — Bear Blog
+    type: rss
+    url: https://karpathy.bearblog.dev/feed/
+    category: practitioner
+    max_items: 10
+    notes: Active low-volume blog with full-content RSS; no keyword gate so all posts enter Stage 1.
+
+  - id: karpathy-blog
+    name: Andrej Karpathy — Long-Form Technical Blog
+    type: rss
+    url: https://karpathy.github.io/feed.xml
+    category: practitioner
+    max_items: 10
+    notes: Long-form technical essays (e.g., microgpt); low-volume RSS 2.0, no keyword gate needed.
 
   - id: simon-willison
     name: Simon Willison Weblog & Linklog
