@@ -1,6 +1,6 @@
 # REVIEW.md (Drop-In Base-Branch Rubric Template)
 
-> **Critical Invariant (`[B]`):** Review tooling and agents **must load `REVIEW.md` from the base/default branch** (e.g., `origin/main`), **never** from the pull request branch being evaluated. A code change cannot edit the rubric that grades it.
+> **Critical Invariant (`[B]`):** Load `REVIEW.md` strictly from the **base/default branch** (such as `origin/main`). Never load it from the pull request branch being evaluated. A code change cannot edit the rubric that grades it.
 >
 > *(If a PR legitimately edits `REVIEW.md` itself, flag that diff for human code-owner approval.)*
 
@@ -10,8 +10,8 @@
 1. **Review fixed commits, not moving targets.** Always record the exact commit SHA reviewed.
 2. **Tag every finding strictly** using one of three labels:
    - **`Important`** — Must fix before merge (real bug, security flaw, data loss, broken backwards compatibility, missing runtime verification).
-   - **`Nit`** — Optional readability/polish suggestion; never block merge.
-   - **`Pre-existing`** — Defect noticed nearby that already existed on the base branch; flag for tracking without blocking this PR.
+   - **`Nit`** — Optional readability or polish suggestion. Never block merge on a `Nit`.
+   - **`Pre-existing`** — Defect noticed nearby that already existed on the base branch. Flag it for tracking without blocking this PR.
 3. **Never stack redundant passes blindly.** Build upon context from earlier review rounds and past verification failures (`[B]`).
 4. **Flag unverified high-risk (`NO UNDO`) changes** for mandatory human sign-off (migrations, deletions, billing, auth boundaries, CI/workflow permissions) (`[C]`).
 
@@ -31,14 +31,15 @@ Do **not** run all items on every small PR. Scan the diff first and execute **on
 | 6 | Test files (`*.test.*`, `*.spec.*`) | **No fake green:** Reject newly added `.skip`, arbitrary `sleep()`, weakened assertions, or mock-only tests hiding broken integration `[B]` | Anti-flake policy |
 | 7 | CI workflows, hooks, `REVIEW.md`, or permission files | **Check integrity:** Require explicit dual/owner human sign-off before changing gates or verification criteria `[B]` | Base-branch protection |
 | 8 | External API / MCP / subprocess integrations | **Input bounds & secret hygiene:** Confirm untrusted payloads aren't interpolated into shells/scripts and secrets stay in vaults `[D]`, `[E]` | Add incident/PR link |
+| 9 | `AGENTS.md`, `SKILL.md`, `GLOSSARY.md`, or rule templates | **Instruction checkability (`STE-80`):** Confirm condition-first rules, one action per sentence, zero synonym drift, and `python3 scripts/ste_lint.py --check` passes `[H]` | Ambiguous compound instructions |
 
 ---
 
 ## 3. How New Rules Earn a Spot Here (Empirical Promotion) `[B]`
 
 Do **not** dump one-off nitpicks into `REVIEW.md`. New rules enter only via two evidence-backed paths:
-1. **Recurring pattern:** Issue appeared in **≥ 2 real PRs** (review comments or reverts) and is **identifiable from a diff** → have **3 agents try to disprove the rule** → merge via human-approved PR `[B]`.
-2. **Incident replay:** Replay **3 independent bug finders** against an incident PR; if **≥ 2 catch the bug** on a small diff where current rules missed it, add a targeted trigger + check here `[B]`.
+1. **Recurring pattern:** Confirm the issue appeared in `>= 2` real PRs and is detectable from a diff. Require **3 agents to fail to disprove the rule** before merging via human-approved PR `[B]`.
+2. **Incident replay:** Replay **3 independent bug finders** against an incident PR. If `>= 2` catch a bug missed on a small diff, add a targeted trigger and check here `[B]`.
 
 ## 4. Pruning Policy `[B]`
-Quarterly, remove rules that never trigger, produce excessive false positives against clean control PRs, or are now enforced deterministically by CI lint/typechecks ("Write It Twice" `[C]`).
+Every quarter, remove rules that never trigger or produce excessive false positives against clean control PRs. Also remove rules now enforced deterministically by CI lint or typechecks ("Write It Twice" `[C]`).

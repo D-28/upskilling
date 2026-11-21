@@ -140,7 +140,7 @@ def merge_into_weekly_digest(
                 f"# Automated Signal Radar — {iso_week}",
                 "",
                 f"- **Last Updated:** `{updated_at}`",
-                "- **Policy:** Fail-closed staged draft (`CLEANUP UNDO`). Only net-new deltas scoring ≥ 6/10 appear here. Review and promote proven refinements manually into `playbooks/`, `templates/`, or `skills/`.",
+                "- **Policy:** Fail-closed staged draft (`CLEANUP UNDO`). Only net-new deltas scoring `>= 6/10` appear here. Review and promote proven refinements manually into `playbooks/`, `templates/`, or `skills/`.",
                 "",
                 "---",
                 "",

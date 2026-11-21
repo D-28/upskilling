@@ -5,8 +5,11 @@ on:
     paths:
       - "pyproject.toml"
       - "radar/feeds.yaml"
-      - "scripts/radar/**"
+      - "scripts/**"
       - "tests/radar/**"
+      - "skills/**"
+      - "templates/**"
+      - "docs/**"
       - ".github/workflows/radar-*.yml"
   push:
     branches:
@@ -14,8 +17,11 @@ on:
     paths:
       - "pyproject.toml"
       - "radar/feeds.yaml"
-      - "scripts/radar/**"
+      - "scripts/**"
       - "tests/radar/**"
+      - "skills/**"
+      - "templates/**"
+      - "docs/**"
       - ".github/workflows/radar-*.yml"
 
 permissions:
@@ -36,8 +42,11 @@ jobs:
       - name: Install dependencies
         run: uv sync
 
-      - name: Lint with ruff
+      - name: Lint Python with ruff
         run: uv run ruff check scripts tests
+
+      - name: Enforce STE-80 instruction grammar (Write It Twice)
+        run: uv run python scripts/ste_lint.py --stats --check --strict-20 skills/*/SKILL.md templates/*.md templates/*.template docs/radar-setup.md
 
       - name: Run unit, property, and offline E2E tests
         run: uv run pytest -v

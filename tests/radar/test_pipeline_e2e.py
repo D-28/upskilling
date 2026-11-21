@@ -105,6 +105,7 @@ class _InventoryAwareStubLLM:
         verdicts: list[Stage1ItemVerdict] = []
         has_verif = "playbooks/verification-engineering.md" in repo_inventory
         has_harness = "playbooks/harness-loop-graph.md" in repo_inventory
+        has_ste = "skills/ste-clarity/SKILL.md" in repo_inventory
 
         for item in items:
             if item.item_id == "b22222222222" and not has_verif:
@@ -123,6 +124,15 @@ class _InventoryAwareStubLLM:
                         verdict="SURVIVOR",
                         matched_repo_file="templates/undo-price-gating.md",
                         reason="Net-new 3-layer architecture framework.",
+                    )
+                )
+            elif item.item_id == "h88888888880" and not has_ste:
+                verdicts.append(
+                    Stage1ItemVerdict(
+                        item_id=item.item_id,
+                        verdict="SURVIVOR",
+                        matched_repo_file="templates/AGENTS.md.template",
+                        reason="Net-new STE-80 clarity standard and 4-level output ladder.",
                     )
                 )
             elif item.item_id.startswith("x"):
@@ -161,7 +171,7 @@ class _InventoryAwareStubLLM:
             item_id=item.item_id,
             passes_net_new_delta_gate=True,
             passes_substance_gate=True,
-            counterargument_to_drop="Some E2E concepts are broadly known, though base-branch REVIEW.md + 3-strike + empirical evals are specific.",
+            counterargument_to_drop="General E2E testing is well known. However, base-branch REVIEW.md and 3-strike gates are net-new.",
             dimensions=RubricDimensions(
                 delta_novelty=2,
                 durability=2,
@@ -170,10 +180,10 @@ class _InventoryAwareStubLLM:
                 career_leverage=2,
             ),
             target_repo_files=["playbooks/verification-engineering.md"],
-            what_is_net_new="Base-branch REVIEW.md, diff-triggered checklists, observe->enforce gates.",
-            proposed_refinement="Create verification playbook covering E2E/property/differential tests and anti-gaming review.",
-            career_takeaway="Core Staff SWE leverage for reviewing high-velocity AI diffs at scale.",
-            evidence_quote="90% of Claude Code's code is written and reviewed by Claude.",
+            what_is_net_new="Adds base-branch REVIEW.md loading, diff-triggered checklists, and observe-to-enforce commit gates.",
+            proposed_refinement="Add a verification playbook covering E2E, property, and differential tests plus anti-gaming review rules.",
+            career_takeaway="Enables Staff SWEs to review high-velocity AI diffs safely across teams.",
+            evidence_quote="Roughly 90% of Claude Code's code is written and reviewed by Claude.",
         )
         trace = LLMCallTrace(
             stage="stage2",
@@ -188,15 +198,18 @@ class _InventoryAwareStubLLM:
 
 
 def test_replay_calibration_fixture_and_job2_staging_e2e(tmp_path: Path) -> None:
+    from scripts.ste_lint import lint_file
+
     fixture = json.loads(FIXTURE_PATH.read_text(encoding="utf-8"))
     candidates = [CandidateItem.model_validate(item) for item in fixture["items"]]
     config = PipelineConfig(repo_root=REPO_ROOT, feeds_path=REPO_ROOT / "radar" / "feeds.yaml")
     stub = _InventoryAwareStubLLM()
 
-    # 1. Verify inventory includes all current playbooks
+    # 1. Verify inventory includes all current playbooks and STE-80 clarity skill
     inv = build_repo_inventory(REPO_ROOT)
     assert "playbooks/verification-engineering.md" in inv
     assert "playbooks/harness-loop-graph.md" in inv
+    assert "skills/ste-clarity/SKILL.md" in inv
 
     # 2. Bootstrap mode seeds seen.json at $0 LLM cost
     boot_res = run_pipeline(
@@ -211,7 +224,7 @@ def test_replay_calibration_fixture_and_job2_staging_e2e(tmp_path: Path) -> None
     assert len(boot_res.new_seen_records) == len(candidates)
     assert boot_res.staged_items == []
 
-    # 3. Full repo present -> 0% false-positive bloat
+    # 3. Full repo present -> 0% false-positive bloat across A-H + decoys
     full_res = run_pipeline(
         config,
         seen=SeenState(),
@@ -257,6 +270,11 @@ def test_replay_calibration_fixture_and_job2_staging_e2e(tmp_path: Path) -> None
     assert digest_file.is_file()
     markers = parse_radar_markers(digest_file.read_text(encoding="utf-8"))
     assert markers == [("b22222222222", "addy-osmani-elevate", "addyo.substack.com")]
+
+    # Dogfood STE-80 linter on the rendered weekly radar digest file
+    ste_stats, ste_violations = lint_file(digest_file, strict_20=True)
+    assert ste_stats.errors == 0, f"STE-80 violations in rendered digest: {ste_violations}"
+    assert ste_stats.ste_score == 100
 
     # Backward-compatible load of persisted state
     loaded_seen = load_seen_state(seen_path)
@@ -312,3 +330,29 @@ def test_pr_reconciliation_and_quarterly_health_report_promotion_and_pruning() -
     assert "3 consecutive fetch errors" in report
     assert health.feeds["openai-news"].human_closed_rejected == 1
     assert health.feeds["hn-agentic"].human_merged == 1
+
+
+def test_ste80_compliance_across_skills_templates_and_prompts(tmp_path: Path) -> None:
+    from scripts.radar.llm import STAGE1_SYSTEM_PROMPT_TEMPLATE, STAGE2_SYSTEM_PROMPT_TEMPLATE
+    from scripts.ste_lint import lint_file
+
+    target_files = [
+        *sorted((REPO_ROOT / "skills").glob("*/SKILL.md")),
+        *sorted((REPO_ROOT / "templates").glob("*.md")),
+        *sorted((REPO_ROOT / "templates").glob("*.template")),
+    ]
+    assert len(target_files) >= 8
+    for path in target_files:
+        stats, violations = lint_file(path, strict_20=True)
+        assert stats.errors == 0, f"{path} failed STE-80 lint: {violations}"
+        assert stats.ste_score == 100
+
+    prompt_doc = tmp_path / "llm_prompts.md"
+    prompt_doc.write_text(
+        STAGE1_SYSTEM_PROMPT_TEMPLATE.format(repo_inventory="")
+        + "\n\n"
+        + STAGE2_SYSTEM_PROMPT_TEMPLATE.format(target_repo_context=""),
+        encoding="utf-8",
+    )
+    p_stats, p_violations = lint_file(prompt_doc, strict_20=False)
+    assert p_stats.errors == 0, f"LLM system prompts failed STE-80 lint: {p_violations}"

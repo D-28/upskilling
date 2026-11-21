@@ -1,6 +1,6 @@
 {
   "name": "nov2026_replay_calibration_v1",
-  "description": "Ground-truth replay fixture derived from radar/2026-11-18-digest.md (A-G) plus 4 hype/redundant/injection decoys. With current playbooks present, all A-G items must be rejected as ALREADY_COVERED; when a specific playbook is withheld, its corresponding high-signal source must be recovered while decoys stay dropped.",
+  "description": "Ground-truth replay fixture derived from radar/2026-11-18-digest.md (A-H) plus 4 hype/redundant/injection decoys. With current playbooks and skills present, all A-H items must be rejected as ALREADY_COVERED; when a specific playbook or skill is withheld, its corresponding high-signal source must be recovered while decoys stay dropped.",
   "items": [
     {
       "item_id": "a11111111111",
@@ -84,6 +84,23 @@
         "playbooks/model-effort-economics.md": "STAGE"
       },
       "ground_truth_ref": "F"
+    },
+    {
+      "item_id": "h88888888880",
+      "feed_id": "hn-agentic",
+      "feed_name": "Hacker News",
+      "title": "Andrej Karpathy: ASD-STE100 (STE-80) and The 4-Level Understanding Ladder",
+      "url": "https://x.com/karpathy/status/2105819303471976479",
+      "canonical_url": "https://x.com/karpathy/status/2105819303471976479",
+      "domain": "x.com",
+      "published_at": "2026-10-02T00:37:00+00:00",
+      "excerpt": "Use ~80% of ASD-STE100 controlled English (one term per concept, condition-first, <=20-25 words per sentence) and escalate up the 4-level understanding ladder: STE-80 text -> diagrams -> discardable interactive HTML -> procedural animations.",
+      "body": "As models take on autonomous work, human work shifts to oversight and comprehension. Default LLM prose rotates synonyms and buries actions in compound sentences. Prompt for ~80% ASD-STE100 (STE-80) and apply STE structural rules to AGENTS.md and SKILL.md with a deterministic linter. Escalate output modality across 4 levels: (1) STE-80 controlled text, (2) Mermaid/SVG diagrams, (3) throwaway interactive HTML widgets, (4) 3b1b-style procedural explainer animations. Guard against authority bias by requiring execution evidence and UNCONFIRMED tags.",
+      "expected_with_full_repo": "DROP",
+      "expected_when_withholding": {
+        "skills/ste-clarity/SKILL.md": "HIGH_SIGNAL"
+      },
+      "ground_truth_ref": "H"
     },
     {
       "item_id": "e55555555555",
