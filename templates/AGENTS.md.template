@@ -1,7 +1,7 @@
 # AGENTS.md (Drop-In Template)
 
 > **Usage:** Copy this file to the root of a repository as `AGENTS.md` (or `CLAUDE.md` / `.github/copilot-instructions.md`).
-> **Design rule (`[C]`, `[B]`):** Context is an attention budget, not storage. Keep this root file **short** (a map, not a manual), point out to deeper docs loaded only when needed, enforce critical rules twice (*guide + CI check*), and prune stale lines routinely.
+> **Design rule (`[C]`, `[B]`, `[H]`):** Context is an attention budget, not storage. Keep this root file **short** (a map, not a manual). Route to deeper docs on demand, enforce critical rules twice (*guide + CI check*), and prune stale lines monthly.
 
 ---
 
@@ -15,7 +15,7 @@
 | Topic | Path | Load When |
 |---|---|---|
 | Architecture & boundaries | `docs/architecture.md` | Adding modules, services, or cross-layer calls |
-| Domain vocabulary | `docs/GLOSSARY.md` | Naming entities, states, API fields, or UI terms `[G]` |
+| Domain vocabulary | `docs/GLOSSARY.md` | Naming entities, states, API fields, or UI terms `[G]`, `[H]` |
 | Architecture decisions | `docs/adr/` | Questioning why a pattern or library was chosen `[G]` |
 | Testing & E2E harness | `docs/testing.md` | Writing or debugging unit, property, or E2E checks `[B]` |
 | Security & permissions | `docs/security.md` | Touching auth, secrets, network egress, or CI `[C]` |
@@ -30,6 +30,7 @@
 <lint-command>
 <typecheck-command>
 <unit-test-command>
+python3 scripts/ste_lint.py --check AGENTS.md skills/*/SKILL.md
 
 # End-to-end runtime verification [B]
 <e2e-or-smoke-command>
@@ -40,20 +41,34 @@ Before editing files on any non-trivial task, write down (or confirm):
 - **`goal`:** What problem is being solved?
 - **`constraints`:** Allowed files/directories (`FENCE`), what must *not* change.
 - **`done_when`:** Exact deterministic check(s) + runtime verification proving success.
-- **`PROGRESS.md` (for multi-step tasks):** Record `tried`, `known`, `next`, and `never` on disk so crashes or context resets never lose dead ends `[C]`.
+- **`PROGRESS.md`:** On multi-step tasks, record `tried`, `known`, `next`, and `never` on disk. Crashes or resets must not lose dead ends `[C]`.
 
 ## 5. "Write It Twice" Guardrails (`GUIDE` + `CHECK`) `[C]`
-Every non-negotiable invariant lives in **both** prose (so agents understand *why*) and an un-bypassable automated check (so agents cannot violate it on an off day):
+Every non-negotiable invariant lives in **both** prose (`GUIDE`) and an un-bypassable automated check (`CHECK`):
 
 | Rule (`GUIDE` for humans & agents) | Automated Enforcement (`CHECK` in CI / lint / hooks) |
 |---|---|
 | UI components never query the database directly; go through `services/` | Lint / import-boundary rule fails if `src/ui/**` imports `src/db/**` `[C]` |
 | No skipping, `sleep()`, or blind retries on flaky tests `[B]` | Lint / CI check rejects `.skip`, `xit`, or unapproved retry plugins |
 | Never log raw credentials, PII, or session tokens `[B]` | Secret scanner + log-redaction test in CI + pre-commit hook |
+| Write agent instructions in `STE-80` (one action per sentence, condition first) `[H]` | `python3 scripts/ste_lint.py --check` fails on `>25`-word sentences, semicolons, or filler |
 | `<Add repo-specific invariant>` | `<Add exact CI/lint/schema gate>` |
 
 ## 6. Verification & Escalation Rules `[B]`, `[C]`
 1. **Run the real change:** Use the repo's `/verify` skill (or E2E smoke test) before claiming done `[B]`.
-2. **3-strike rule:** If a check fails after **3 repair rounds**—or produces the exact same error twice—stop editing and escalate to a human with `FAILED / EXPECTED / SAW / DEAD ENDS` `[B]`, `[C]`.
-3. **Memory hygiene:** If two disk notes contradict each other, flag the conflict explicitly instead of silently picking one, and tag any unverified fact or assumption as `UNCONFIRMED`.
-4. **Maintenance & audit cadence:** Review and prune outdated rules from this file monthly (`[B]`), and periodically run a separate read-only audit pass to surface stale or conflicting memory files (`PROGRESS.md`, `GLOSSARY.md`, ADRs).
+2. **3-strike rule:** If a check fails after **3 repair rounds**, or repeats the exact same error twice, stop editing. Escalate to a human with `FAILED / EXPECTED / SAW / DEAD ENDS` `[B]`, `[C]`.
+3. **Memory hygiene:** If two disk notes conflict, flag the conflict explicitly instead of picking one silently. Tag any unverified fact or assumption as `UNCONFIRMED`.
+4. **Maintenance cadence:** Review and prune outdated rules from this file monthly `[B]`. Run a separate read-only audit pass to surface stale memory files (`PROGRESS.md`, `GLOSSARY.md`, ADRs).
+
+## 7. Instruction & Output Clarity (`STE-80` + Modality Ladder) `[H]`
+Apply these rules to prompts, `AGENTS.md`, `SKILL.md`, checklists, and PR summaries—never to long-form essays:
+1. **One term per concept:** Use exact canonical names from `GLOSSARY.md`. Never rotate synonyms for a file, command, or entity.
+2. **One action per sentence:** Write instructions in the imperative (*"Run the linter."*). Split compound steps into separate numbered lines.
+3. **Condition first:** Put the trigger before the action (*"If the check fails, read the log."*).
+4. **Length caps (split, do not trim):** Keep instructions to `<= 20` words and descriptions to `<= 25` words (excluding code spans). Keep rationale as a separate sentence.
+5. **Anti-authority-bias check:** Clean prose can mask wrong facts. Always pair `STE-80` summaries with execution evidence and `UNCONFIRMED` tags `[B]`, `[H]`.
+6. **Escalate output modality to match the review bottleneck (`[H]`):**
+   - **Level 1 (Facts / Steps):** Controlled English (`STE-80`).
+   - **Level 2 (Topology / Flow):** `Mermaid` or `SVG` diagram instead of multi-paragraph prose.
+   - **Level 3 (Parameter / State Exploration):** Throwaway, self-contained interactive `.html` artifact.
+   - **Level 4 (Temporal Dynamics):** Procedural animation script (`Manim` / Canvas) when motion over time is the bottleneck.
