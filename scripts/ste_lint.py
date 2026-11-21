@@ -20,13 +20,12 @@ Usage:
 from __future__ import annotations
 
 import argparse
-from dataclasses import asdict, dataclass
 import json
-from pathlib import Path
 import re
 import sys
-from typing import Iterable
-
+from collections.abc import Iterable
+from dataclasses import asdict, dataclass
+from pathlib import Path
 
 BANNED_PHRASES: dict[str, str] = {
     "utilize": "use",
