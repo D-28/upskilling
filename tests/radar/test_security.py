@@ -8,11 +8,15 @@ from hypothesis import strategies as st
 
 from scripts.radar.security import (
     SSRFError,
+    UnsafeXMLError,
+    filter_allowed_repo_paths,
     html_to_plain_text,
     is_blocked_ip,
+    redact_secrets,
     sanitize_markdown_text,
     sanitize_single_line,
     validate_public_https_url,
+    validate_xml_no_entities,
 )
 
 
@@ -92,20 +96,72 @@ def test_html_to_plain_text_strips_scripts_styles_and_tags() -> None:
     assert "Hello world & friends." in out
 
 
-def test_sanitize_markdown_neutralizes_scripts_tracking_images_and_forged_markers() -> None:
+def test_sanitize_markdown_neutralizes_scripts_tracking_images_mentions_and_forged_markers() -> None:
     malicious = (
         "<!-- radar-id: ffffffffffff source: fake domain: evil.com -->"
         "<script>alert(1)</script>"
         "![tracker](https://evil.example/pixel.png) "
         "[click me](javascript:alert(2)) "
-        "Legit insight here."
+        "[good](https://example.com/clean) "
+        "Ping @torvalds and `@already_coded` about this."
     )
     out = sanitize_markdown_text(malicious)
     assert "radar-id:" not in out
     assert "<script>" not in out
     assert "pixel.png" not in out
     assert "javascript:" not in out
-    assert "Legit insight here." in out
+    assert "[good](https://example.com/clean)" in out
+    assert "`@torvalds`" in out
+    assert "``@already_coded``" not in out
+
+
+def test_xml_entity_expansion_guard_blocks_bombs_and_allows_cdata_html_doctype() -> None:
+    bomb = (
+        b'<?xml version="1.0"?>'
+        b'<!DOCTYPE lolz [<!ENTITY lol "lol">]>'
+        b"<rss><channel><item><title>&lol;</title></item></channel></rss>"
+    )
+    with pytest.raises(UnsafeXMLError):
+        validate_xml_no_entities(bomb)
+
+    cdata_html = (
+        b'<?xml version="1.0"?>'
+        b"<rss><channel><item><title>Post</title>"
+        b"<description><![CDATA[<!DOCTYPE html><html><body>Hi</body></html>]]></description>"
+        b"</item></channel></rss>"
+    )
+    validate_xml_no_entities(cdata_html)
+
+
+def test_redact_secrets_scrubs_api_keys_and_tokens(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("GEMINI_API_KEY", "my-super-secret-gemini-key-12345")
+    raw = (
+        "Error calling https://generativelanguage.googleapis.com?key=AIzaSyD1234567890abcdefghijklmno_12345 "
+        "with env my-super-secret-gemini-key-12345 and Authorization: Bearer secret_jwt_token_value_999 "
+        "and ghp_1234567890abcdefghijklmnopqrstuv"
+    )
+    scrubbed = redact_secrets(raw)
+    assert "AIzaSyD" not in scrubbed
+    assert "my-super-secret-gemini-key-12345" not in scrubbed
+    assert "secret_jwt_token_value_999" not in scrubbed
+    assert "ghp_12345" not in scrubbed
+    assert "[REDACTED]" in scrubbed
+
+
+def test_filter_allowed_repo_paths_blocks_traversal_and_workflows() -> None:
+    candidates = [
+        "playbooks/verification-engineering.md",
+        "../etc/passwd",
+        ".github/workflows/radar-ingest.yml",
+        "skills/verify/SKILL.md",
+        "todo.md",
+        "arbitrary/script.sh",
+    ]
+    assert filter_allowed_repo_paths(candidates) == [
+        "playbooks/verification-engineering.md",
+        "skills/verify/SKILL.md",
+        "todo.md",
+    ]
 
 
 @given(st.text(max_size=300))

@@ -12,8 +12,13 @@ from __future__ import annotations
 import re
 
 from scripts.radar.config import HIGH_SIGNAL_SCORE_THRESHOLD, STAGE_SCORE_THRESHOLD
+from scripts.radar.fetcher import canonicalize_url
 from scripts.radar.models import CandidateItem, ScoredSurvivor, Stage2Analysis
-from scripts.radar.security import sanitize_markdown_text, sanitize_single_line
+from scripts.radar.security import (
+    filter_allowed_repo_paths,
+    sanitize_markdown_text,
+    sanitize_single_line,
+)
 
 _MARKER_RE = re.compile(
     r"<!--\s*radar-id:\s*([a-f0-9]{12})\s+source:\s*([A-Za-z0-9_.\-]+)\s+domain:\s*([A-Za-z0-9_.\-]+)\s*-->"
@@ -89,19 +94,22 @@ def render_survivor_entry(scored: ScoredSurvivor) -> str:
 
     title = sanitize_single_line(item.title, max_chars=180)
     feed_name = sanitize_single_line(item.feed_name, max_chars=80)
+    safe_domain = re.sub(r"[^A-Za-z0-9_.\-]", "", item.domain) or "source"
+    safe_url = canonicalize_url(item.canonical_url)
     badge = "HIGH SIGNAL" if scored.disposition == "HIGH_SIGNAL" else "STAGE"
-    targets = ", ".join(f"`{sanitize_single_line(t, 80)}`" for t in a.target_repo_files) or "`radar/`"
+    allowed_targets = filter_allowed_repo_paths(a.target_repo_files)
+    targets = ", ".join(f"`{t}`" for t in allowed_targets) or "`radar/`"
     net_new = sanitize_markdown_text(a.what_is_net_new, max_chars=800)
     refinement = sanitize_markdown_text(a.proposed_refinement, max_chars=800)
     career = sanitize_markdown_text(a.career_takeaway, max_chars=400)
     counter = sanitize_markdown_text(a.counterargument_to_drop, max_chars=400)
     evidence = sanitize_markdown_text(a.evidence_quote, max_chars=300)
 
-    marker = format_radar_marker(item.item_id, item.feed_id, item.domain)
+    marker = format_radar_marker(item.item_id, item.feed_id, safe_domain)
     lines = [
         marker,
         f"### [{scored.score}/10 · {badge}] {title}",
-        f"- **Source:** {feed_name} · [`{item.domain}`]({item.canonical_url})",
+        f"- **Source:** {feed_name} · [`{safe_domain}`]({safe_url})",
         f"- **Target Repo Files:** {targets}",
         (
             f"- **Rubric Breakdown:** Novelty `{d.delta_novelty}/2` · Durability `{d.durability}/2` · "

@@ -1,16 +1,20 @@
-"""Deterministic security boundaries: SSRF walls, HTML stripping, and Markdown sanitization.
+"""Deterministic security boundaries: SSRF walls, XML entity guard, secret redaction, and Markdown sanitization.
 
 Enforces Harness Walls outside the model (playbooks/harness-loop-graph.md):
 - Blocks non-HTTPS URLs and any hostname resolving to private, loopback, link-local
   (including cloud metadata 169.254.169.254), CGNAT, multicast, or reserved IPs.
-- Strips HTML tags, scripts, styles, and unsafe markdown/link schemes from untrusted
-  external feed text before it ever enters an LLM prompt or rendered radar digest.
+- Blocks XML DTD / ENTITY expansion ("Billion Laughs" / XXE) before XML parsing.
+- Redacts API keys and tokens from all error strings before logging or persisting to
+  public artifacts / `radar-state`.
+- Strips HTML tags, scripts, styles, unsafe markdown link schemes, and bare GitHub
+  `@mentions` from untrusted external feed text before it enters prompts or PRs.
 """
 
 from __future__ import annotations
 
 import html
 import ipaddress
+import os
 import re
 import socket
 from collections.abc import Callable
@@ -32,6 +36,10 @@ _METADATA_HOSTNAMES = frozenset(
 
 class SSRFError(ValueError):
     """Raised when a URL violates SSRF egress boundaries."""
+
+
+class UnsafeXMLError(ValueError):
+    """Raised when an XML payload contains forbidden DTD or ENTITY declarations."""
 
 
 def is_blocked_ip(ip_str: str) -> bool:
@@ -116,6 +124,54 @@ def validate_public_https_url(
     return cleaned
 
 
+_XML_ENTITY_DECL_RE = re.compile(rb"<!\s*ENTITY\b", re.IGNORECASE)
+_XML_DOCTYPE_DECL_RE = re.compile(rb"<!\s*DOCTYPE\b", re.IGNORECASE)
+_XML_ROOT_START_RE = re.compile(rb"<\s*(?:rss|feed|rdf:rdf)\b", re.IGNORECASE)
+
+
+def validate_xml_no_entities(xml_bytes: bytes) -> None:
+    """Reject XML entity declarations and prolog DOCTYPEs (Billion Laughs / XXE defense).
+
+    Allows `<!DOCTYPE html>` when it appears inside `<![CDATA[...]]>` item bodies after
+    the root `<rss>` / `<feed>` tag, while blocking any `<!ENTITY` or prolog `<!DOCTYPE`.
+    """
+    if _XML_ENTITY_DECL_RE.search(xml_bytes):
+        raise UnsafeXMLError("XML ENTITY declarations are forbidden (entity expansion guard)")
+    root_match = _XML_ROOT_START_RE.search(xml_bytes)
+    prolog = xml_bytes[: root_match.start()] if root_match else xml_bytes[:4096]
+    if _XML_DOCTYPE_DECL_RE.search(prolog):
+        raise UnsafeXMLError("XML prolog DOCTYPE declarations are forbidden")
+
+
+_SECRET_PATTERNS: tuple[re.Pattern[str], ...] = (
+    re.compile(r"AIza[0-9A-Za-z_\-]{30,}"),
+    re.compile(r"gh[pousr]_[A-Za-z0-9_]{20,}"),
+    re.compile(r"github_pat_[A-Za-z0-9_]{20,}"),
+    re.compile(r"(?i)(bearer\s+)[A-Za-z0-9._\-]{12,}"),
+    re.compile(r"(?i)((?:api[_-]?key|token|secret|password)\s*[=:]\s*)[^\s&\"']{6,}"),
+)
+
+
+def redact_secrets(text: str) -> str:
+    """Scrub API keys and bearer tokens from error messages before logging or persisting."""
+    if not text:
+        return ""
+    scrubbed = text
+    env_key = os.environ.get("GEMINI_API_KEY", "").strip()
+    if len(env_key) >= 8 and env_key in scrubbed:
+        scrubbed = scrubbed.replace(env_key, "[REDACTED]")
+    gh_token = os.environ.get("GH_TOKEN", "").strip()
+    if len(gh_token) >= 8 and gh_token in scrubbed:
+        scrubbed = scrubbed.replace(gh_token, "[REDACTED]")
+
+    for idx, pat in enumerate(_SECRET_PATTERNS):
+        if idx >= 3:
+            scrubbed = pat.sub(r"\1[REDACTED]", scrubbed)
+        else:
+            scrubbed = pat.sub("[REDACTED]", scrubbed)
+    return scrubbed
+
+
 class _SafeTextHTMLParser(HTMLParser):
     """Minimal stdlib HTML-to-text extractor that drops script/style/noscript blocks."""
 
@@ -150,7 +206,6 @@ class _SafeTextHTMLParser(HTMLParser):
     def get_text(self) -> str:
         raw = "".join(self._parts)
         raw = html.unescape(raw)
-        # Collapse horizontal whitespace and excess blank lines
         lines = [re.sub(r"[ \t\r\f\v]+", " ", line).strip() for line in raw.splitlines()]
         compact = "\n".join(line for line in lines if line)
         return compact.strip()
@@ -164,7 +219,6 @@ def html_to_plain_text(raw_html: str, max_chars: int = 16_000) -> str:
     parser.feed(raw_html)
     parser.close()
     text = parser.get_text()
-    # Strip ASCII control characters except newline/tab
     text = re.sub(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]", "", text)
     if len(text) > max_chars:
         return text[: max_chars - 3].rstrip() + "..."
@@ -173,26 +227,41 @@ def html_to_plain_text(raw_html: str, max_chars: int = 16_000) -> str:
 
 _HTML_TAG_RE = re.compile(r"<[^>]+>")
 _MD_IMAGE_RE = re.compile(r"!\[([^\]]*)\]\(([^)]+)\)")
-_DANGEROUS_LINK_RE = re.compile(
-    r"\[([^\]]+)\]\(\s*(?:javascript|data|vbscript|file):[^)]*\)", re.IGNORECASE
-)
+_MD_LINK_RE = re.compile(r"\[([^\]]+)\]\(([^)]*)\)")
+_MD_REF_LINK_DEF_RE = re.compile(r"^\s*\[[^\]]+\]:\s*\S+.*$", re.MULTILINE)
 _HTML_COMMENT_RE = re.compile(r"<!--.*?-->", re.DOTALL)
+_BARE_MENTION_RE = re.compile(
+    r"(?<!`)(?<![A-Za-z0-9._%+\-/])@([A-Za-z0-9](?:[A-Za-z0-9_\-]{0,37}[A-Za-z0-9])?)(?!`)"
+)
+
+
+def _sanitize_md_link(match: re.Match[str]) -> str:
+    label = match.group(1)
+    target = match.group(2).strip()
+    if target.lower().startswith("https://") and not any(c in target for c in " \t\n\r()<>\"'`"):
+        return f"[{label}]({target})"
+    return label
 
 
 def sanitize_markdown_text(text: str, max_chars: int = 2_000) -> str:
-    """Sanitize untrusted or LLM-emitted text before writing to radar/*.md.
+    """Sanitize untrusted or LLM-emitted text before writing to radar/*.md or PR bodies.
 
     - Removes HTML comments (so untrusted text cannot forge `<!-- radar-id: ... -->` markers)
     - Removes raw HTML tags (`<script>`, `<img>`, `<iframe>`, etc.)
     - Neutralizes markdown images (prevents external tracking pixels in GitHub PRs)
-    - Neutralizes dangerous link schemes (`javascript:`, `data:`, `vbscript:`, `file:`)
+    - Strips any markdown links that are not clean `https://` targets (blocks `javascript:`,
+      `data:`, `vbscript:`, `file:`, and reference-style link definitions)
+    - Wraps bare `@username` mentions in backticks (`` `@username` ``) so public-repo
+      Draft PRs never send unsolicited notification pings to random GitHub users.
     """
     if not text:
         return ""
     cleaned = _HTML_COMMENT_RE.sub("", text)
     cleaned = _MD_IMAGE_RE.sub(lambda m: m.group(1) or "[image removed]", cleaned)
-    cleaned = _DANGEROUS_LINK_RE.sub(lambda m: m.group(1), cleaned)
+    cleaned = _MD_REF_LINK_DEF_RE.sub("", cleaned)
+    cleaned = _MD_LINK_RE.sub(_sanitize_md_link, cleaned)
     cleaned = _HTML_TAG_RE.sub("", cleaned)
+    cleaned = _BARE_MENTION_RE.sub(r"`@\1`", cleaned)
     cleaned = re.sub(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]", "", cleaned)
     cleaned = cleaned.strip()
     if len(cleaned) > max_chars:
@@ -207,3 +276,20 @@ def sanitize_single_line(text: str, max_chars: int = 200) -> str:
     if len(cleaned) > max_chars:
         cleaned = cleaned[: max_chars - 3].rstrip() + "..."
     return cleaned
+
+
+_ALLOWED_REPO_PATH_RE = re.compile(
+    r"^(?:(?:playbooks|templates|skills|hooks|radar|docs)/[A-Za-z0-9_.\-/]+|todo\.md|README\.md)$"
+)
+
+
+def filter_allowed_repo_paths(paths: list[str]) -> list[str]:
+    """Filter LLM-proposed `target_repo_files` to valid, non-traversing repository paths."""
+    valid: list[str] = []
+    for raw in paths:
+        clean = raw.strip().lstrip("/")
+        if ".." in clean or not _ALLOWED_REPO_PATH_RE.match(clean):
+            continue
+        if clean not in valid:
+            valid.append(clean)
+    return valid

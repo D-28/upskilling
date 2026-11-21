@@ -28,6 +28,11 @@ from scripts.radar.models import (
     Stage1ItemVerdict,
 )
 from scripts.radar.rubric import merge_into_weekly_digest, score_stage2_analysis
+from scripts.radar.security import (
+    filter_allowed_repo_paths,
+    redact_secrets,
+    sanitize_single_line,
+)
 from scripts.radar.state import (
     apply_run_result_to_state,
     generate_feed_health_report,
@@ -46,11 +51,11 @@ def current_iso_week(now: datetime | None = None) -> str:
 
 
 def build_job_summary_markdown(result: RunResult) -> str:
-    """Format a crisp Markdown summary suitable for GitHub Actions Job Summary."""
+    """Format a crisp, sanitized Markdown summary suitable for GitHub Actions & PR bodies."""
     lines = [
         f"## Radar Ingestion Summary — `{result.iso_week}` (`{result.mode}`)",
         "",
-        f"- **Run timestamp:** `{result.run_at}`",
+        f"- **Run timestamp:** `{sanitize_single_line(result.run_at, 64)}`",
         f"- **New candidates after Stage 0:** `{result.candidates_fetched}`",
         f"- **Stage 1 reviewed:** `{result.stage1_reviewed}`",
         f"- **Stage 2 evaluated:** `{len(result.stage2_results)}`",
@@ -65,13 +70,18 @@ def build_job_summary_markdown(result: RunResult) -> str:
                 for t in result.traces
             }
         )
-        lines.append(f"- **Models resolved:** {', '.join(f'`{m}`' for m in models_used)}")
+        lines.append(
+            f"- **Models resolved:** {', '.join(f'`{sanitize_single_line(m, 90)}`' for m in models_used)}"
+        )
 
     if result.staged_items:
         lines.extend(["", "### Survivors Crossing the Bar", ""])
         for s in result.staged_items:
+            safe_title = sanitize_single_line(s.item.title, 180)
+            safe_feed = sanitize_single_line(s.item.feed_id, 60)
+            targets = ", ".join(filter_allowed_repo_paths(s.analysis.target_repo_files)) or "radar/"
             lines.append(
-                f"- **[{s.score}/10 · {s.disposition}]** {s.item.title} (`{s.item.feed_id}`) -> {', '.join(s.analysis.target_repo_files) or 'radar/'}"
+                f"- **[{s.score}/10 · {s.disposition}]** {safe_title} (`{safe_feed}`) -> {targets}"
             )
     else:
         lines.extend(["", "_Nothing crossed the bar this run._"])
@@ -80,7 +90,8 @@ def build_job_summary_markdown(result: RunResult) -> str:
     if failed_feeds:
         lines.extend(["", "### Feed Fetch Errors", ""])
         for f in failed_feeds:
-            lines.append(f"- `{f.feed_id}`: {f.error}")
+            safe_err = sanitize_single_line(redact_secrets(f.error), 200)
+            lines.append(f"- `{sanitize_single_line(f.feed_id, 60)}`: {safe_err}")
 
     lines.append("")
     return "\n".join(lines)
@@ -234,14 +245,21 @@ def apply_run_result_files(
     seen_path: Path,
     health_path: Path,
     digest_dir: Path | None = None,
+    summary_out_path: Path | None = None,
+    update_state: bool = True,
 ) -> dict[str, object]:
     """Job 2 deterministic helper: validate run-result.json, update state, and render radar/ digest."""
     result = RunResult.model_validate_json(run_result_path.read_text(encoding="utf-8"))
-    seen = load_seen_state(seen_path)
-    health = load_feed_health(health_path)
-    updated_seen, updated_health = apply_run_result_to_state(seen, health, result)
-    save_seen_state(seen_path, updated_seen)
-    save_feed_health(health_path, updated_health)
+    if update_state:
+        seen = load_seen_state(seen_path)
+        health = load_feed_health(health_path)
+        updated_seen, updated_health = apply_run_result_to_state(seen, health, result)
+        save_seen_state(seen_path, updated_seen)
+        save_feed_health(health_path, updated_health)
+
+    if summary_out_path is not None:
+        summary_out_path.parent.mkdir(parents=True, exist_ok=True)
+        summary_out_path.write_text(build_job_summary_markdown(result), encoding="utf-8")
 
     digest_path: Path | None = None
     added_count = 0
@@ -307,6 +325,8 @@ def _cmd_apply_state(args: argparse.Namespace) -> int:
         seen_path=Path(args.seen_path),
         health_path=Path(args.health_path),
         digest_dir=Path(args.digest_dir) if args.digest_dir else None,
+        summary_out_path=Path(args.summary_out) if args.summary_out else None,
+        update_state=not args.no_update_state,
     )
     print(json.dumps(outcome, indent=2))
     return 0
@@ -377,6 +397,8 @@ def build_parser() -> argparse.ArgumentParser:
     p_apply.add_argument("--seen-path", required=True)
     p_apply.add_argument("--health-path", required=True)
     p_apply.add_argument("--digest-dir", default="", help="Directory for radar/YYYY-Www-digest.md (enforce mode).")
+    p_apply.add_argument("--summary-out", default="", help="Regenerate sanitized summary markdown in Job 2.")
+    p_apply.add_argument("--no-update-state", action="store_true", help="Render digest without re-applying state counters.")
     p_apply.set_defaults(func=_cmd_apply_state)
 
     p_health = sub.add_parser("health-report", help="Emit quarterly feed-health & promotion report.")

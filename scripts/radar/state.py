@@ -10,6 +10,7 @@ import json
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
+from scripts.radar.config import MAX_SEEN_ITEMS
 from scripts.radar.fetcher import extract_domain
 from scripts.radar.models import (
     DomainHitRecord,
@@ -19,6 +20,7 @@ from scripts.radar.models import (
     RunResult,
     SeenState,
 )
+from scripts.radar.security import redact_secrets
 
 
 def load_seen_state(path: Path) -> SeenState:
@@ -59,6 +61,8 @@ def apply_run_result_to_state(
     seen: SeenState,
     health: FeedHealthState,
     result: RunResult,
+    *,
+    max_seen_items: int = MAX_SEEN_ITEMS,
 ) -> tuple[SeenState, FeedHealthState]:
     """Deterministically apply a validated Job 1 RunResult into seen & feed-health state."""
     updated_seen = seen.model_copy(deep=True)
@@ -67,6 +71,14 @@ def apply_run_result_to_state(
     updated_seen.updated_at = result.run_at
     for item_id, rec in result.new_seen_records.items():
         updated_seen.items[item_id] = rec
+
+    if len(updated_seen.items) > max_seen_items:
+        sorted_pairs = sorted(
+            updated_seen.items.items(),
+            key=lambda kv: (kv[1].first_seen_at or "", kv[0]),
+            reverse=True,
+        )[:max_seen_items]
+        updated_seen.items = dict(sorted_pairs)
 
     updated_health.updated_at = result.run_at
     for fs in result.feed_summaries:
@@ -78,7 +90,7 @@ def apply_run_result_to_state(
             stats.last_success_at = result.run_at
         else:
             stats.consecutive_fetch_errors += 1
-            stats.last_error = fs.error
+            stats.last_error = redact_secrets(fs.error)[:240]
 
     # Track Stage 1 survivors & Stage 2 staged counts per feed
     survivor_ids = {v.item_id for v in result.stage1_verdicts if v.verdict == "SURVIVOR"}

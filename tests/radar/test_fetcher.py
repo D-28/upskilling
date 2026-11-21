@@ -205,3 +205,39 @@ def test_survivor_enricher_fails_closed_on_captcha_and_enriches_clean_article(
     )
     assert enriched.enrichment_status == "enriched"
     assert "Detailed engineering walkthrough" in enriched.body
+
+
+def test_parse_rss_or_atom_recovers_complete_items_from_truncated_large_feed() -> None:
+    from scripts.radar.fetcher import parse_rss_or_atom
+
+    truncated_rss = (
+        b'<?xml version="1.0" encoding="utf-8"?>'
+        b"<rss version=\"2.0\"><channel><title>Large Substack</title>"
+        b"<item><title>First Complete Post</title><link>https://example.com/1</link>"
+        b"<description><![CDATA[<p>Full content 1</p>]]></description></item>"
+        b"<item><title>Second Complete Post</title><link>https://example.com/2</link>"
+        b"<description><![CDATA[<p>Full content 2</p>]]></description></item>"
+        b"<item><title>Third Truncated Post</title><link>https://example.com/3</link>"
+        b"<description><![CDATA[<p>Unclosed CDATA section cut mid-stream..."
+    )
+    feed = FeedEntry(
+        id="addy-osmani-elevate",
+        name="Elevate",
+        type="rss",
+        url="https://addyo.substack.com/feed",
+        max_items=10,
+    )
+    parsed = parse_rss_or_atom(truncated_rss, feed)
+    assert len(parsed) == 2
+    assert parsed[0]["title"] == "First Complete Post"
+    assert parsed[1]["title"] == "Second Complete Post"
+
+
+def test_canonicalize_url_percent_encodes_markdown_link_breakout_chars() -> None:
+    malicious = 'https://evil.example/path) [Click](https://phish.example)?q=a(b)`c"'
+    canon = canonicalize_url(malicious)
+    assert ")" not in canon
+    assert "(" not in canon
+    assert " " not in canon
+    assert "`" not in canon
+    assert '"' not in canon
