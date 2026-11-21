@@ -25,6 +25,7 @@ import ssl
 import urllib.error
 import urllib.request
 import xml.etree.ElementTree as ET
+import zlib
 from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -92,6 +93,16 @@ _BOT_WALL_PATTERNS = (
     "just a moment...",
 )
 _UNSAFE_URL_CHARS_RE = re.compile(r"[\s()\[\]<>\"'`\\]")
+_GZIP_MAGIC = b"\x1f\x8b"
+
+
+def decompress_if_gzipped(data: bytes, max_bytes: int = MAX_FEED_BYTES) -> bytes:
+    """Safely decompress gzip payloads (e.g. Google Frontend CDN) with a hard byte cap."""
+    if not data.startswith(_GZIP_MAGIC):
+        return data
+    decompressor = zlib.decompressobj(16 + zlib.MAX_WBITS)
+    out = decompressor.decompress(data, max_bytes)
+    return out
 
 
 class _NoRedirectHandler(urllib.request.HTTPRedirectHandler):
@@ -249,6 +260,7 @@ def safe_http_get(
             headers={
                 "User-Agent": user_agent,
                 "Accept": "application/atom+xml, application/rss+xml, application/json, text/html, text/plain;q=0.9",
+                "Accept-Encoding": "gzip, identity",
             },
             method="GET",
         )
@@ -257,6 +269,7 @@ def safe_http_get(
                 data = resp.read(max_bytes + 1)
                 if len(data) > max_bytes:
                     data = data[:max_bytes]
+                data = decompress_if_gzipped(data, max_bytes=max_bytes)
                 return current_url, data
         except urllib.error.HTTPError as exc:
             if exc.code in (301, 302, 303, 307, 308):
@@ -315,6 +328,7 @@ def parse_rss_or_atom(xml_bytes: bytes, feed: FeedEntry) -> list[dict[str, str]]
     collected. If a multi-megabyte feed is truncated at `MAX_FEED_BYTES` after at least one
     complete item has been parsed, returns the complete items instead of failing the feed.
     """
+    xml_bytes = decompress_if_gzipped(xml_bytes, max_bytes=MAX_FEED_BYTES)
     validate_xml_no_entities(xml_bytes)
 
     pull = ET.XMLPullParser(events=("start", "end"))

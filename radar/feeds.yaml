@@ -158,12 +158,13 @@ feeds:
     use_default_keywords: true
 
   - id: addy-osmani-elevate
-    name: Addy Osmani — Elevate (Substack)
+    name: Addy Osmani — Agentic Engineering Blog
     type: rss
-    url: https://addyo.substack.com/feed
+    url: https://addyosmani.com/rss.xml
     category: practitioner
     max_items: 10
     use_default_keywords: true
+    notes: Native static RSS feed (avoids Substack Cloudflare 403 blocks on GitHub Actions IPs).
 
   - id: hn-agentic
     name: Hacker News (High-Score Agentic Stories)

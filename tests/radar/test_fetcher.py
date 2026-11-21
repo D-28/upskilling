@@ -241,3 +241,29 @@ def test_canonicalize_url_percent_encodes_markdown_link_breakout_chars() -> None
     assert " " not in canon
     assert "`" not in canon
     assert '"' not in canon
+
+
+def test_parse_rss_or_atom_handles_gzipped_feed_payload() -> None:
+    import gzip
+
+    from scripts.radar.fetcher import parse_rss_or_atom
+
+    raw_xml = (
+        b'<?xml version="1.0" encoding="utf-8"?>'
+        b"<rss version=\"2.0\"><channel><title>DeepMind Blog</title>"
+        b"<item><title>Gzipped Agent Post</title><link>https://deepmind.google/blog/post-1</link>"
+        b"<description>Agent verification details</description></item></channel></rss>"
+    )
+    gzipped = gzip.compress(raw_xml)
+    assert gzipped.startswith(b"\x1f\x8b")
+
+    feed = FeedEntry(
+        id="google-deepmind-blog",
+        name="Google DeepMind Blog",
+        type="rss",
+        url="https://deepmind.google/blog/rss.xml",
+        max_items=5,
+    )
+    items = parse_rss_or_atom(gzipped, feed)
+    assert len(items) == 1
+    assert items[0]["title"] == "Gzipped Agent Post"

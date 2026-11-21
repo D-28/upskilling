@@ -177,7 +177,11 @@ def generate_feed_health_report(
             reasons.append(f"{s.consecutive_fetch_errors} consecutive fetch errors")
         if reviewed >= 3 and reject_rate > 0.90:
             reasons.append(f"{reject_rate:.0%} human rejection rate ({s.human_closed_rejected}/{reviewed})")
-        if s.items_fetched > 0 and s.human_merged == 0 and s.last_success_at:
+        if (
+            s.human_merged == 0
+            and s.last_success_at
+            and (len(health.reconciled_prs) >= 4 or s.items_fetched >= 30)
+        ):
             reasons.append("0 human-merged items in window")
 
         if reasons:
