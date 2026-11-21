@@ -5,19 +5,19 @@ description: Interview the user relentlessly before coding to resolve design amb
 
 # Socratic Spec & Tracer-Bullet Slicing (`grill-to-spec`)
 
-Use this skill when starting a new feature, non-trivial refactor, or ambiguous ticket—**before** writing implementation code. Its goal is to resolve all fuzzy requirements up front and save crisp artifacts to disk so implementation sessions stay in the LLM "Smart Zone" (under ~100K–150K tokens of context).
+Use this skill when starting a new feature, non-trivial refactor, or ambiguous ticket—**before** writing implementation code. Resolve all fuzzy requirements up front and save crisp artifacts to disk. This keeps implementation sessions in the LLM "Smart Zone" (under `~100K–150K` tokens of context).
 
 ## Principles
 1. **No vibe coding on fuzzy requirements.** Surface hidden edge cases, naming conflicts, failure modes, and data-model boundaries through focused questioning first.
-2. **Persist decisions to disk.** Context windows are temporary RAM; `GLOSSARY.md`, Architecture Decision Records (ADRs), and written specs are durable disk memory.
-3. **Slice vertically ("tracer bullets"), not horizontally.** Never create separate tickets for "build all DB tables", "build all APIs", "build all UI". Every ticket must cut a thin vertical slice end to end (schema + logic + interface + test) so it can be independently verified in one fresh session.
+2. **Persist decisions to disk.** Context windows are temporary RAM. `GLOSSARY.md`, Architecture Decision Records (ADRs), and written specs are durable disk memory.
+3. **Slice vertically ("tracer bullets"), not horizontally.** Never create separate tickets for "build all DB tables", "build all APIs", "build all UI". Every ticket must cut a thin vertical slice end to end (`schema + logic + interface + test`). Verify each slice independently in one fresh session.
 
 ---
 
 ## Workflow
 
 ### Phase 1: Explore Existing Code & Docs
-Before asking questions, inspect the repo briefly (`README`, relevant directories, existing `GLOSSARY.md`, `docs/adr/`, tests) so you do not ask questions the codebase already answers.
+Before asking questions, inspect the repo briefly (`README`, relevant directories, existing `GLOSSARY.md`, `docs/adr/`, tests). Do not ask questions the codebase already answers.
 
 ### Phase 2: Socratic Grill (One Decision Branch at a Time)
 Interview the user systematically—covering **1–3 tightly focused questions per turn**, offering your recommended default when appropriate:
@@ -44,7 +44,7 @@ Create a concise markdown spec containing:
 
 ### Phase 5: Slice into Vertical Tracer-Bullet Tickets
 Break the spec into ordered, minimal vertical slices (`Ticket 1`, `Ticket 2`, ...):
-- Each ticket touches only what is needed to prove one real slice end to end (data → logic → UI/CLI/API → automated test).
+- Each ticket touches only what is needed to prove one real slice end to end (`data -> logic -> UI/CLI/API -> test`).
 - Each ticket must fit comfortably inside **one clean, fresh agent session** (Smart Zone) without needing prior chat history.
 - For each ticket, include:
   - **Scope & In-Files**
@@ -52,4 +52,4 @@ Break the spec into ordered, minimal vertical slices (`Ticket 1`, `Ticket 2`, ..
   - **Done When (Verification command / E2E assertion)**
 
 ### Phase 6: Context Reset Recommendation
-Once the spec and tracer-bullet tickets are saved to disk, explicitly recommend **starting a fresh session / clearing context** before implementing Ticket 1 so the implementation agent begins with a clean attention budget.
+Once the spec and tracer-bullet tickets are saved to disk, recommend **starting a fresh session** before implementing `Ticket 1`. This guarantees the implementation agent begins with a clean attention budget.

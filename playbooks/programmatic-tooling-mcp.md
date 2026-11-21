@@ -73,9 +73,9 @@ You do not need an experimental flag to capture 80% of Code Mode's context savin
 | Environment | How to Apply Programmatic Tooling Now |
 |---|---|
 | **Antigravity (personal)** | Use **`run_workflow`** (Python scripts orchestrating parallel `call_tool` / `agent` calls and aggregating in Python) and **`swarm`** for isolated parallel worker contexts (`[C]`, `[D]`). |
-| **GitHub Copilot CLI (professional)** | Wrap noisy multi-step repo/API queries in small deterministic helper scripts (`scripts/*.sh` or Python) that emit crisp JSON/markdown summaries, pair with custom agents (`.github/agents/*.agent.md`), and enforce boundaries via lifecycle hooks (`[C]`, `[D]`). |
+| **GitHub Copilot CLI (professional)** | Wrap noisy multi-step repo/API queries in small deterministic helper scripts (`scripts/*.sh` or Python, e.g., [`scripts/ste_lint.py --json`](../scripts/ste_lint.py)) that emit crisp JSON/markdown summaries, pair with custom agents (`.github/agents/*.agent.md`), and enforce boundaries via lifecycle hooks (`[C]`, `[D]`). |
 | **Claude Code** | Enable `CLAUDE_CODE_EXPERIMENTAL_CODE_MODE=1` in non-HIPAA/non-Bedrock personal CLI sessions for repo-wide sweeps; keep deterministic repo helper scripts for CI and enterprise setups (`[D]`). |
 
 ---
 
-*Related: [`hooks/verify-gate-observe.md`](../hooks/verify-gate-observe.md) · [`playbooks/harness-loop-graph.md`](harness-loop-graph.md) · [`playbooks/model-effort-economics.md`](model-effort-economics.md)*
+*Related: [`hooks/verify-gate-observe.md`](../hooks/verify-gate-observe.md) · [`scripts/ste_lint.py`](../scripts/ste_lint.py) · [`playbooks/harness-loop-graph.md`](harness-loop-graph.md) · [`playbooks/model-effort-economics.md`](model-effort-economics.md)*

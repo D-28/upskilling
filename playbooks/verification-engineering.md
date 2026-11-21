@@ -109,4 +109,27 @@ Use two disciplined promotion loops instead of knee-jerk prompt additions:
 
 ---
 
-*Related: [`skills/verify/SKILL.md`](../skills/verify/SKILL.md) · [`skills/diff-review/SKILL.md`](../skills/diff-review/SKILL.md) · [`templates/REVIEW.md.template`](../templates/REVIEW.md.template) · [`hooks/verify-gate-observe.md`](../hooks/verify-gate-observe.md)*
+## 6. Human Review Bandwidth: `STE-80` & The 4-Level Understanding Ladder (`[H]`, `[B]`)
+
+Verification has two halves: **machine verification** (E2E, property, and differential checks proving the code runs) and **human comprehension bandwidth** (how quickly a human engineer can audit an agent's architectural decision, PR walkthrough, or verification report without drowning in verbose LLM prose) (`[H]`, `[B]`).
+
+### A. Match Output Modality to the Comprehension Bottleneck (`[H]`)
+Default LLM prose is the lowest-bandwidth format for structural, causal, or dynamic questions. Escalate up Karpathy's **4-Level Understanding Ladder** (`[H]`) whenever prose forces the reviewer to reconstruct a system in their head:
+
+| Rung | Format | Best For | Why It Beats Walls of Prose |
+|---|---|---|---|
+| **Level 1** | **Controlled English (`STE-80`)** | PR descriptions, ADR summaries, verification evidence, procedures | Cuts conversational filler, bans synonym drift against `GLOSSARY.md`, and keeps sentences `<= 20–25` words (`[H]`) |
+| **Level 2** | **Diagrams (`Mermaid` / `SVG`)** | Module boundaries, dependency graphs, state machines, request flows | Exposes structural relationships and missing edges at a glance (`[H]`) |
+| **Level 3** | **Discardable Interactive HTML Artifacts** | Parameter sensitivity, trade-off curves, algorithm state steppers | Lets the reviewer drag a slider or toggle states in a throwaway `.html` widget to verify edge cases in 30 seconds (`[H]`) |
+| **Level 4** | **Procedural Explainer Animations** | Time-evolving dynamics, spatial transforms, customer/exec walkthroughs | High-bandwidth `Manim` / HTML5 Canvas animation when static diagrams cannot show motion over time (`[H]`) |
+
+> **Discardable Software Artifacts (`[H]`):** Because code generation is cheap, an agent can generate a bespoke, self-contained `.html` explorer just to help a human verify one tricky PR or algorithm—and discard it once merged.
+
+### B. The Authority-Bias Guardrail (`[H]`, `[B]`, `[C]`)
+Controlled language (`STE-80`) has one dangerous failure mode: **clean, punchy sentences make hallucinated or incomplete logic sound authoritative** (`[H]`).
+- Never accept `STE-80` formatting as a substitute for execution evidence (`[B]`, `[C]`).
+- Require agents to tag any unverified statement as `UNCONFIRMED` (`[C]`) and pair every PR walkthrough with concrete `Verified-By:` command/test outputs (`[B]`).
+
+---
+
+*Related: [`skills/verify/SKILL.md`](../skills/verify/SKILL.md) · [`skills/diff-review/SKILL.md`](../skills/diff-review/SKILL.md) · [`skills/ste-clarity/SKILL.md`](../skills/ste-clarity/SKILL.md) · [`scripts/ste_lint.py`](../scripts/ste_lint.py) · [`templates/REVIEW.md.template`](../templates/REVIEW.md.template) · [`hooks/verify-gate-observe.md`](../hooks/verify-gate-observe.md)*
