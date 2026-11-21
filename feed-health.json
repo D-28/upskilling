@@ -1,0 +1,129 @@
+{
+  "feeds": {
+    "addy-osmani-elevate": {
+      "consecutive_fetch_errors": 1,
+      "human_closed_rejected": 0,
+      "human_merged": 0,
+      "items_fetched": 0,
+      "last_error": "unclosed CDATA section: line 26, column 55077",
+      "last_merged_at": "",
+      "last_success_at": "",
+      "stage1_survivors": 0,
+      "stage2_staged": 0
+    },
+    "anthropic-engineering": {
+      "consecutive_fetch_errors": 0,
+      "human_closed_rejected": 0,
+      "human_merged": 0,
+      "items_fetched": 1,
+      "last_error": "",
+      "last_merged_at": "",
+      "last_success_at": "2026-11-21T04:33:41.263719+00:00",
+      "stage1_survivors": 0,
+      "stage2_staged": 0
+    },
+    "claude-code-releases": {
+      "consecutive_fetch_errors": 0,
+      "human_closed_rejected": 0,
+      "human_merged": 0,
+      "items_fetched": 8,
+      "last_error": "",
+      "last_merged_at": "",
+      "last_success_at": "2026-11-21T04:33:41.263719+00:00",
+      "stage1_survivors": 0,
+      "stage2_staged": 0
+    },
+    "github-copilot-changelog": {
+      "consecutive_fetch_errors": 0,
+      "human_closed_rejected": 0,
+      "human_merged": 0,
+      "items_fetched": 5,
+      "last_error": "",
+      "last_merged_at": "",
+      "last_success_at": "2026-11-21T04:33:41.263719+00:00",
+      "stage1_survivors": 0,
+      "stage2_staged": 0
+    },
+    "google-deepmind-blog": {
+      "consecutive_fetch_errors": 0,
+      "human_closed_rejected": 0,
+      "human_merged": 0,
+      "items_fetched": 1,
+      "last_error": "",
+      "last_merged_at": "",
+      "last_success_at": "2026-11-21T04:33:41.263719+00:00",
+      "stage1_survivors": 0,
+      "stage2_staged": 0
+    },
+    "hn-agentic": {
+      "consecutive_fetch_errors": 0,
+      "human_closed_rejected": 0,
+      "human_merged": 0,
+      "items_fetched": 1,
+      "last_error": "",
+      "last_merged_at": "",
+      "last_success_at": "2026-11-21T04:33:41.263719+00:00",
+      "stage1_survivors": 0,
+      "stage2_staged": 0
+    },
+    "karpathy-bearblog": {
+      "consecutive_fetch_errors": 0,
+      "human_closed_rejected": 0,
+      "human_merged": 0,
+      "items_fetched": 0,
+      "last_error": "",
+      "last_merged_at": "",
+      "last_success_at": "2026-11-21T04:33:41.263719+00:00",
+      "stage1_survivors": 0,
+      "stage2_staged": 0
+    },
+    "karpathy-blog": {
+      "consecutive_fetch_errors": 1,
+      "human_closed_rejected": 0,
+      "human_merged": 0,
+      "items_fetched": 0,
+      "last_error": "no element found: line 1497, column 235",
+      "last_merged_at": "",
+      "last_success_at": "",
+      "stage1_survivors": 0,
+      "stage2_staged": 0
+    },
+    "openai-codex-releases": {
+      "consecutive_fetch_errors": 0,
+      "human_closed_rejected": 0,
+      "human_merged": 0,
+      "items_fetched": 10,
+      "last_error": "",
+      "last_merged_at": "",
+      "last_success_at": "2026-11-21T04:33:41.263719+00:00",
+      "stage1_survivors": 0,
+      "stage2_staged": 0
+    },
+    "openai-news": {
+      "consecutive_fetch_errors": 1,
+      "human_closed_rejected": 0,
+      "human_merged": 0,
+      "items_fetched": 0,
+      "last_error": "unclosed token: line 6506, column 12",
+      "last_merged_at": "",
+      "last_success_at": "",
+      "stage1_survivors": 0,
+      "stage2_staged": 0
+    },
+    "simon-willison": {
+      "consecutive_fetch_errors": 0,
+      "human_closed_rejected": 0,
+      "human_merged": 0,
+      "items_fetched": 7,
+      "last_error": "",
+      "last_merged_at": "",
+      "last_success_at": "2026-11-21T04:33:41.263719+00:00",
+      "stage1_survivors": 0,
+      "stage2_staged": 0
+    }
+  },
+  "reconciled_prs": [],
+  "schema_version": 1,
+  "unsubscribed_domain_hits": {},
+  "updated_at": "2026-11-21T04:33:41.263719+00:00"
+}

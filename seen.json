@@ -1,0 +1,270 @@
+{
+  "items": {
+    "0e9fb0eb84f1": {
+      "canonical_url": "https://deepmind.google/blog/introducing-alphaproof-code",
+      "content_hash": "",
+      "feed_id": "google-deepmind-blog",
+      "first_seen_at": "2026-11-21T04:33:41.263719+00:00",
+      "title_hash": "3ba798a4e26d",
+      "verdict": "BOOTSTRAP_SEEDED"
+    },
+    "1590e3f63876": {
+      "canonical_url": "https://github.com/anthropics/claude-code/releases/tag/v2.1.328",
+      "content_hash": "4cfd3b5adaef",
+      "feed_id": "claude-code-releases",
+      "first_seen_at": "2026-11-21T04:33:41.263719+00:00",
+      "title_hash": "5d0a883f4fc2",
+      "verdict": "BOOTSTRAP_SEEDED"
+    },
+    "1c2cff6fe549": {
+      "canonical_url": "https://simonwillison.net/2026/Nov/18/daniel-stenberg",
+      "content_hash": "61364ce6ccef",
+      "feed_id": "simon-willison",
+      "first_seen_at": "2026-11-21T04:33:41.263719+00:00",
+      "title_hash": "3e564cc27918",
+      "verdict": "BOOTSTRAP_SEEDED"
+    },
+    "1e02ab9c34ce": {
+      "canonical_url": "https://github.com/openai/codex/releases/tag/rust-v0.171.0",
+      "content_hash": "591a73d51332",
+      "feed_id": "openai-codex-releases",
+      "first_seen_at": "2026-11-21T04:33:41.263719+00:00",
+      "title_hash": "e65e5eac2bb9",
+      "verdict": "BOOTSTRAP_SEEDED"
+    },
+    "2776fbf561bb": {
+      "canonical_url": "https://github.com/openai/codex/releases/tag/rust-v0.172.0-alpha.2",
+      "content_hash": "",
+      "feed_id": "openai-codex-releases",
+      "first_seen_at": "2026-11-21T04:33:41.263719+00:00",
+      "title_hash": "c8a3dc143862",
+      "verdict": "BOOTSTRAP_SEEDED"
+    },
+    "2f60e884dd61": {
+      "canonical_url": "https://github.com/openai/codex/releases/tag/rust-v0.171.0-alpha.13",
+      "content_hash": "",
+      "feed_id": "openai-codex-releases",
+      "first_seen_at": "2026-11-21T04:33:41.263719+00:00",
+      "title_hash": "caf9d079c7df",
+      "verdict": "BOOTSTRAP_SEEDED"
+    },
+    "3007f82c3813": {
+      "canonical_url": "https://www.anthropic.com/research/building-strong-safety-evaluations",
+      "content_hash": "",
+      "feed_id": "anthropic-engineering",
+      "first_seen_at": "2026-11-21T04:33:41.263719+00:00",
+      "title_hash": "6e6d082c6832",
+      "verdict": "BOOTSTRAP_SEEDED"
+    },
+    "35bb80cc6612": {
+      "canonical_url": "https://github.com/openai/codex/releases/tag/rust-v0.173.0-alpha.4",
+      "content_hash": "",
+      "feed_id": "openai-codex-releases",
+      "first_seen_at": "2026-11-21T04:33:41.263719+00:00",
+      "title_hash": "d0bc525d8112",
+      "verdict": "BOOTSTRAP_SEEDED"
+    },
+    "362ee7bc4f19": {
+      "canonical_url": "https://github.blog/changelog/2026-11-18-gemini-4-neon-in-github-copilot",
+      "content_hash": "3f06617f3057",
+      "feed_id": "github-copilot-changelog",
+      "first_seen_at": "2026-11-21T04:33:41.263719+00:00",
+      "title_hash": "3b46fb884626",
+      "verdict": "BOOTSTRAP_SEEDED"
+    },
+    "3f7f7cffebe4": {
+      "canonical_url": "https://simonwillison.net/2026/Nov/20/token-fraud-is-here-and-its-bad",
+      "content_hash": "6222b4439f52",
+      "feed_id": "simon-willison",
+      "first_seen_at": "2026-11-21T04:33:41.263719+00:00",
+      "title_hash": "2ee6fd9a5481",
+      "verdict": "BOOTSTRAP_SEEDED"
+    },
+    "4cc1e304d768": {
+      "canonical_url": "https://github.blog/changelog/2026-11-17-monitor-github-copilot-activity-through-microsoft-agent-365",
+      "content_hash": "8121a379fe21",
+      "feed_id": "github-copilot-changelog",
+      "first_seen_at": "2026-11-21T04:33:41.263719+00:00",
+      "title_hash": "604d49745f84",
+      "verdict": "BOOTSTRAP_SEEDED"
+    },
+    "4e2b4f1543d1": {
+      "canonical_url": "https://github.com/anthropics/claude-code/releases/tag/v2.1.326",
+      "content_hash": "f91cc522adb9",
+      "feed_id": "claude-code-releases",
+      "first_seen_at": "2026-11-21T04:33:41.263719+00:00",
+      "title_hash": "08e496757396",
+      "verdict": "BOOTSTRAP_SEEDED"
+    },
+    "57e7781a892d": {
+      "canonical_url": "https://github.blog/changelog/2026-11-17-openais-gpt-6-2-astra-and-gpt-6-2-sol-now-available",
+      "content_hash": "b770273f966a",
+      "feed_id": "github-copilot-changelog",
+      "first_seen_at": "2026-11-21T04:33:41.263719+00:00",
+      "title_hash": "701f237dd5ae",
+      "verdict": "BOOTSTRAP_SEEDED"
+    },
+    "6b2d356ac9f7": {
+      "canonical_url": "https://simonwillison.net/2026/Nov/18/datasette-arrows",
+      "content_hash": "9d45cc45160b",
+      "feed_id": "simon-willison",
+      "first_seen_at": "2026-11-21T04:33:41.263719+00:00",
+      "title_hash": "bff2ee6ca113",
+      "verdict": "BOOTSTRAP_SEEDED"
+    },
+    "6beb5088ff95": {
+      "canonical_url": "https://github.blog/changelog/2026-11-17-copilot-code-review-adaptive-effort-secret-detection-and-more",
+      "content_hash": "6d6cc1d5a11c",
+      "feed_id": "github-copilot-changelog",
+      "first_seen_at": "2026-11-21T04:33:41.263719+00:00",
+      "title_hash": "ee00f9f61f08",
+      "verdict": "BOOTSTRAP_SEEDED"
+    },
+    "6f0fb0223e38": {
+      "canonical_url": "https://simonwillison.net/2026/Nov/17/datasette-lite",
+      "content_hash": "81c10f9ceb3e",
+      "feed_id": "simon-willison",
+      "first_seen_at": "2026-11-21T04:33:41.263719+00:00",
+      "title_hash": "552632cbb556",
+      "verdict": "BOOTSTRAP_SEEDED"
+    },
+    "755c036c2660": {
+      "canonical_url": "https://github.com/openai/codex/releases/tag/rust-v0.172.0-alpha.1",
+      "content_hash": "",
+      "feed_id": "openai-codex-releases",
+      "first_seen_at": "2026-11-21T04:33:41.263719+00:00",
+      "title_hash": "7dc58de858db",
+      "verdict": "BOOTSTRAP_SEEDED"
+    },
+    "82b169450b02": {
+      "canonical_url": "https://simonwillison.net/2026/Nov/17/gpt62-astra-and-sol",
+      "content_hash": "1520fdaed29e",
+      "feed_id": "simon-willison",
+      "first_seen_at": "2026-11-21T04:33:41.263719+00:00",
+      "title_hash": "d4876add9ee8",
+      "verdict": "BOOTSTRAP_SEEDED"
+    },
+    "8427d4fee9a7": {
+      "canonical_url": "https://github.com/anthropics/claude-code/releases/tag/v2.1.323",
+      "content_hash": "bb92b94d3cd1",
+      "feed_id": "claude-code-releases",
+      "first_seen_at": "2026-11-21T04:33:41.263719+00:00",
+      "title_hash": "a600aade8617",
+      "verdict": "BOOTSTRAP_SEEDED"
+    },
+    "8c4432adfe17": {
+      "canonical_url": "https://simonwillison.net/2026/Nov/18/llm-gemini",
+      "content_hash": "51cc9dd54f5c",
+      "feed_id": "simon-willison",
+      "first_seen_at": "2026-11-21T04:33:41.263719+00:00",
+      "title_hash": "ce4cf61da83f",
+      "verdict": "BOOTSTRAP_SEEDED"
+    },
+    "8e2ce054ff04": {
+      "canonical_url": "https://github.blog/changelog/2026-11-18-connect-supabase-box-calendly-and-more-to-copilot",
+      "content_hash": "c2f3af413e2f",
+      "feed_id": "github-copilot-changelog",
+      "first_seen_at": "2026-11-21T04:33:41.263719+00:00",
+      "title_hash": "e0dbd9b98d5e",
+      "verdict": "BOOTSTRAP_SEEDED"
+    },
+    "8f7a055a1b36": {
+      "canonical_url": "https://github.com/anthropics/claude-code/releases/tag/v2.1.327",
+      "content_hash": "2f532fa3b165",
+      "feed_id": "claude-code-releases",
+      "first_seen_at": "2026-11-21T04:33:41.263719+00:00",
+      "title_hash": "b494b79eeff0",
+      "verdict": "BOOTSTRAP_SEEDED"
+    },
+    "9291232aee04": {
+      "canonical_url": "https://github.com/openai/codex/releases/tag/rust-v0.173.0-alpha.2",
+      "content_hash": "",
+      "feed_id": "openai-codex-releases",
+      "first_seen_at": "2026-11-21T04:33:41.263719+00:00",
+      "title_hash": "cbb0b523eeae",
+      "verdict": "BOOTSTRAP_SEEDED"
+    },
+    "a8c812cefc0f": {
+      "canonical_url": "https://www.masteringemacs.org/article/announcing-dreamcoder",
+      "content_hash": "",
+      "feed_id": "hn-agentic",
+      "first_seen_at": "2026-11-21T04:33:41.263719+00:00",
+      "title_hash": "4e4e7595d566",
+      "verdict": "BOOTSTRAP_SEEDED"
+    },
+    "ace31f3b0bb1": {
+      "canonical_url": "https://github.com/anthropics/claude-code/releases/tag/v2.1.321",
+      "content_hash": "ac75bdb1cb47",
+      "feed_id": "claude-code-releases",
+      "first_seen_at": "2026-11-21T04:33:41.263719+00:00",
+      "title_hash": "a9d0c4cf8c2c",
+      "verdict": "BOOTSTRAP_SEEDED"
+    },
+    "ad076a99b892": {
+      "canonical_url": "https://github.com/openai/codex/releases/tag/rust-v0.170.0",
+      "content_hash": "85ec3da71cbd",
+      "feed_id": "openai-codex-releases",
+      "first_seen_at": "2026-11-21T04:33:41.263719+00:00",
+      "title_hash": "aa5b6283df16",
+      "verdict": "BOOTSTRAP_SEEDED"
+    },
+    "b208e8b7c729": {
+      "canonical_url": "https://github.com/openai/codex/releases/tag/rust-v0.173.0-alpha.1",
+      "content_hash": "",
+      "feed_id": "openai-codex-releases",
+      "first_seen_at": "2026-11-21T04:33:41.263719+00:00",
+      "title_hash": "a44d3e58e3ee",
+      "verdict": "BOOTSTRAP_SEEDED"
+    },
+    "e45fd791e1fe": {
+      "canonical_url": "https://simonwillison.net/2026/Nov/17/external-sandboxes-for-coding-agents",
+      "content_hash": "b0442b55c48d",
+      "feed_id": "simon-willison",
+      "first_seen_at": "2026-11-21T04:33:41.263719+00:00",
+      "title_hash": "0902342b9553",
+      "verdict": "BOOTSTRAP_SEEDED"
+    },
+    "e58a3ce1f17a": {
+      "canonical_url": "https://github.com/anthropics/claude-code/releases/tag/v2.1.325",
+      "content_hash": "6b75904a5991",
+      "feed_id": "claude-code-releases",
+      "first_seen_at": "2026-11-21T04:33:41.263719+00:00",
+      "title_hash": "c78249daf6b2",
+      "verdict": "BOOTSTRAP_SEEDED"
+    },
+    "f3d370a5121a": {
+      "canonical_url": "https://github.com/anthropics/claude-code/releases/tag/v2.1.329",
+      "content_hash": "80c217014cc5",
+      "feed_id": "claude-code-releases",
+      "first_seen_at": "2026-11-21T04:33:41.263719+00:00",
+      "title_hash": "50f21844c0fc",
+      "verdict": "BOOTSTRAP_SEEDED"
+    },
+    "faf08ecbdbee": {
+      "canonical_url": "https://github.com/openai/codex/releases/tag/rust-v0.173.0-alpha.3",
+      "content_hash": "",
+      "feed_id": "openai-codex-releases",
+      "first_seen_at": "2026-11-21T04:33:41.263719+00:00",
+      "title_hash": "bc8921fd31d6",
+      "verdict": "BOOTSTRAP_SEEDED"
+    },
+    "fdc4cffb6fa7": {
+      "canonical_url": "https://github.com/anthropics/claude-code/releases/tag/v2.1.330",
+      "content_hash": "cc0517a12afe",
+      "feed_id": "claude-code-releases",
+      "first_seen_at": "2026-11-21T04:33:41.263719+00:00",
+      "title_hash": "f24fa1f705f0",
+      "verdict": "BOOTSTRAP_SEEDED"
+    },
+    "ff08a8aeb056": {
+      "canonical_url": "https://github.com/openai/codex/releases/tag/rust-v0.171.0-alpha.13.1",
+      "content_hash": "",
+      "feed_id": "openai-codex-releases",
+      "first_seen_at": "2026-11-21T04:33:41.263719+00:00",
+      "title_hash": "d64d70bce484",
+      "verdict": "BOOTSTRAP_SEEDED"
+    }
+  },
+  "schema_version": 1,
+  "updated_at": "2026-11-21T04:33:41.263719+00:00"
+}
