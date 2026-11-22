@@ -1,5 +1,13 @@
 {
   "items": {
+    "01731f7f1731": {
+      "canonical_url": "https://x.com/hwchase17/status/2124181216719151585?a=PWiUEqVg4r5jGgo5Bmk",
+      "content_hash": "c13729ccc9fb",
+      "feed_id": "fast-lane",
+      "first_seen_at": "2026-11-22T22:23:52.653980+00:00",
+      "title_hash": "e0316969a3bf",
+      "verdict": "ALREADY_COVERED"
+    },
     "06d2d06f2b70": {
       "canonical_url": "https://www.pandex.io/",
       "content_hash": "",
@@ -330,5 +338,5 @@
     }
   },
   "schema_version": 1,
-  "updated_at": "2026-11-22T20:14:25.223071+00:00"
+  "updated_at": "2026-11-22T22:23:52.653980+00:00"
 }
