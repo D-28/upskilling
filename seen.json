@@ -1,5 +1,13 @@
 {
   "items": {
+    "06d2d06f2b70": {
+      "canonical_url": "https://www.pandex.io/",
+      "content_hash": "",
+      "feed_id": "hn-agentic",
+      "first_seen_at": "2026-11-22T20:14:25.223071+00:00",
+      "title_hash": "7f617330f15f",
+      "verdict": "NO_WORKFLOW_DELTA"
+    },
     "0e9fb0eb84f1": {
       "canonical_url": "https://deepmind.google/blog/introducing-alphaproof-code",
       "content_hash": "",
@@ -15,6 +23,14 @@
       "first_seen_at": "2026-11-21T04:33:41.263719+00:00",
       "title_hash": "5d0a883f4fc2",
       "verdict": "BOOTSTRAP_SEEDED"
+    },
+    "1a10f1676d46": {
+      "canonical_url": "https://openai.com/index/perplexity-and-intelligence",
+      "content_hash": "51d90b50f099",
+      "feed_id": "openai-news",
+      "first_seen_at": "2026-11-22T20:14:25.223071+00:00",
+      "title_hash": "675ee88dadaf",
+      "verdict": "MODEL_RELEASE_FLUFF"
     },
     "1c2cff6fe549": {
       "canonical_url": "https://simonwillison.net/2026/Nov/18/daniel-stenberg",
@@ -216,6 +232,14 @@
       "title_hash": "1ee26324e5d4",
       "verdict": "BOOTSTRAP_SEEDED"
     },
+    "9e90f9c09471": {
+      "canonical_url": "https://github.com/gulivan/worker755",
+      "content_hash": "",
+      "feed_id": "hn-agentic",
+      "first_seen_at": "2026-11-22T20:14:25.223071+00:00",
+      "title_hash": "6c597fc51213",
+      "verdict": "MARKETING_REBRAND"
+    },
     "a8c812cefc0f": {
       "canonical_url": "https://www.masteringemacs.org/article/announcing-dreamcoder",
       "content_hash": "",
@@ -306,5 +330,5 @@
     }
   },
   "schema_version": 1,
-  "updated_at": "2026-11-21T19:59:50.944014+00:00"
+  "updated_at": "2026-11-22T20:14:25.223071+00:00"
 }
