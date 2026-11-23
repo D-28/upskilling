@@ -12,7 +12,7 @@ In run `#45077480015`, a manual `fast_lane_url` pointing to `x.com` returned onl
 
 1. **Fast-Lane Plan B and Fail-Closed Gate:** Before calling any LLM, `build_fast_lane_candidate` runs safe Plan B canonical/oEmbed resolution. If extracted text stays below `600` chars or `100` words, it exits non-zero as `FETCH_INCOMPLETE` at `$0` LLM cost. Login and JS walls fail closed the same way.
 2. **Direct Frontier Fast-Lane Routing:** Validated fast-lane articles bypass Stage 1 and route straight to `STAGE3_MODEL` (`gemini-4-neon`, `HIGH` thinking) with `MAX_RUN_COST_USD` raised to `0.50`.
-3. **Daily Buffer to Weekly Coherence Gate:** Mon–Sat sweeps buffer local survivors (`score >= 7/10`) in `radar-state/pending-candidates.json` without opening PRs. On Sunday, if buffered items exist, Stage 3 loads the full repo (`~13K` tokens) and score-blind candidates into `gemini-4-neon` (`HIGH`). It audits six systemic poisons and cross-item interactions, emitting `REJECT_ALL` and opening zero PRs on most weeks.
+3. **Daily Buffer to Weekly Coherence Gate:** Mon–Sat sweeps buffer local survivors (`score >= 7/10`) in `radar-state/pending-candidates.json` without opening PRs. On Sunday, Stage 3 loads the full repo (`~13K` tokens) and score-blind buffered items into `gemini-4-neon` (`HIGH`). It audits six systemic poisons and cross-item interactions, emitting `REJECT_ALL` and opening zero PRs on most weeks.
 
 ## Alternatives Considered (and Why Rejected)
 

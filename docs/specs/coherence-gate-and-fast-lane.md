@@ -57,7 +57,8 @@ Stage 3 evaluates every buffered candidate or synthesis against six failure mode
 
 ## 4. Invariants & Edge Cases
 
-- **Job Summary Observability:** Every run prints mode, `fast_lane_url`, extracted `title` + `body_chars`, and every Stage 1/2/3 verdict row.
+- **Job Summary Observability:** Every run prints mode, `fast_lane_url`, `force`, extracted `title` + `body_chars`, and every Stage 1/2/3 verdict row.
+- **SSRF-Safe Plan B Hop Cap:** Every Plan B URL (`og:url`, `canonical`, external link, oEmbed) passes SSRF checks with at most `3` extra fetches.
 - **No `seen.json` Burn on Fast-Lane Tests:** Manual `observe` fast-lane runs and `FETCH_INCOMPLETE` failures never mark the URL as seen. Add `--force` / `force` input on `workflow_dispatch`.
 - **De-Anchored Stage 3 Input:** Python strips Stage 2 numeric scores and badges before building the Stage 3 prompt.
 - **Cost & Zero-Tool Walls:** `tools=None` on Stage 3. Raise `MAX_RUN_COST_USD` to `0.50` and add `neon` pricing (`$3.00 / $0.15 / $15.00`) to `scripts/radar/config.py`.
@@ -70,7 +71,7 @@ Stage 3 evaluates every buffered candidate or synthesis against six failure mode
 ### Ticket 1: Fast-Lane Plan B, `FETCH_INCOMPLETE` Gate & Rich Job Summary
 - **Undo Tier:** `CLEANUP UNDO`
 - **Scope:** Resolve `og:url` / `canonical` / external links + `publish.twitter.com/oembed` in `build_fast_lane_candidate`. Enforce `>= 600` chars and `>= 100` words, failing closed (`FETCH_INCOMPLETE`, exit `1` on dispatch) before LLM calls. Enrich `build_job_summary_markdown` with inputs, extracted sizes, and all Stage 1/2 verdict rows. Add `force` input and stop burning `seen.json` on `observe` fast-lane runs.
-- **In Scope:** `scripts/radar/fetcher.py`, `scripts/radar/models.py`, `scripts/radar/cli.py`, `.github/workflows/radar-ingest.yml`, `tests/radar/test_fetcher.py`, `tests/radar/test_pipeline_e2e.py`.
+- **In Scope:** `scripts/radar/fetcher.py`, `scripts/radar/models.py`, `scripts/radar/state.py`, `scripts/radar/cli.py`, `.github/workflows/radar-ingest.yml`, `tests/radar/test_fetcher.py`, `tests/radar/test_pipeline_e2e.py`.
 - **Out of Scope:** Weekly buffer persistence and Stage 3 Coherence Gate (`Tickets 2–3`).
 - **Done When:**
   - `uv run ruff check scripts tests` and `uv run pytest -v` exit `0`.
