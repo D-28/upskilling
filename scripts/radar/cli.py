@@ -11,15 +11,20 @@ from pathlib import Path
 
 from scripts.radar.config import PipelineConfig
 from scripts.radar.fetcher import (
+    FetchIncompleteError,
     build_fast_lane_candidate,
+    canonicalize_url,
     enrich_survivor_body,
+    extract_domain,
     fetch_candidates,
     load_feed_registry,
+    make_item_id,
 )
 from scripts.radar.inventory import build_repo_inventory, load_target_repo_context
 from scripts.radar.llm import BudgetExceededError, GeminiRadarClient, RadarLLMClient
 from scripts.radar.models import (
     CandidateItem,
+    CandidateSummary,
     FeedFetchSummary,
     RunResult,
     ScoredSurvivor,
@@ -50,12 +55,35 @@ def current_iso_week(now: datetime | None = None) -> str:
     return f"{iso.year}-W{iso.week:02d}"
 
 
+def _to_candidate_summary(item: CandidateItem) -> CandidateSummary:
+    return CandidateSummary(
+        item_id=item.item_id,
+        feed_id=item.feed_id,
+        title=item.title,
+        url=item.url,
+        canonical_url=item.canonical_url,
+        body_chars=len(item.body),
+        word_count=len(item.body.split()),
+        enrichment_status=item.enrichment_status,
+    )
+
+
 def build_job_summary_markdown(result: RunResult) -> str:
-    """Format a crisp, sanitized Markdown summary suitable for GitHub Actions & PR bodies."""
+    """Format a self-contained, sanitized Markdown summary for GitHub Actions & PR bodies."""
+    fast_lane_display = (
+        sanitize_single_line(result.fast_lane_url, 200) if result.fast_lane_url else "none"
+    )
     lines = [
         f"## Radar Ingestion Summary — `{result.iso_week}` (`{result.mode}`)",
         "",
         f"- **Run timestamp:** `{sanitize_single_line(result.run_at, 64)}`",
+        f"- **Run inputs:** `mode={result.mode}` · `fast_lane_url={fast_lane_display}` · `force={str(result.force).lower()}`",
+        f"- **Pipeline status:** `{result.status}`"
+        + (
+            f" (`{sanitize_single_line(result.error_code, 40)}`)"
+            if result.error_code and result.error_code != result.status
+            else ""
+        ),
         f"- **New candidates after Stage 0:** `{result.candidates_fetched}`",
         f"- **Stage 1 reviewed:** `{result.stage1_reviewed}`",
         f"- **Stage 2 evaluated:** `{len(result.stage2_results)}`",
@@ -73,6 +101,78 @@ def build_job_summary_markdown(result: RunResult) -> str:
         lines.append(
             f"- **Models resolved:** {', '.join(f'`{sanitize_single_line(m, 90)}`' for m in models_used)}"
         )
+
+    candidates_by_id: dict[str, CandidateSummary] = {
+        cs.item_id: cs for cs in result.candidate_summaries
+    }
+    for s in result.stage2_results:
+        if s.item.item_id not in candidates_by_id:
+            candidates_by_id[s.item.item_id] = _to_candidate_summary(s.item)
+
+    if result.fast_lane_url and result.candidate_summaries:
+        fl = result.candidate_summaries[0]
+        fl_title = sanitize_single_line(fl.title, 180)
+        fl_canon = sanitize_single_line(fl.canonical_url, 200)
+        lines.append(
+            f"- **Fast-lane extraction:** title=`{fl_title}` · canonical_url=`{fl_canon}` · "
+            f"`body_chars={fl.body_chars}` · `words={fl.word_count}` · status=`{fl.enrichment_status}`"
+        )
+
+    if result.status == "FETCH_INCOMPLETE" or result.error_code == "FETCH_INCOMPLETE":
+        safe_err = sanitize_single_line(redact_secrets(result.error_message), 280)
+        lines.extend(
+            [
+                "",
+                "### Fail-Closed Content Gate (`FETCH_INCOMPLETE`)",
+                "",
+                f"- **Reason:** {safe_err}",
+            ]
+        )
+
+    if result.stage1_verdicts:
+        lines.extend(
+            [
+                "",
+                "### Stage 1 Triage Verdicts",
+                "",
+                "| Item ID | Feed | Title | `body_chars` | Verdict | Matched File | Drop / Triage Reason |",
+                "|---|---|---|---:|---|---|---|",
+            ]
+        )
+        for v in result.stage1_verdicts:
+            cs = candidates_by_id.get(v.item_id)
+            feed_cell = sanitize_single_line(cs.feed_id if cs else "", 60) or "-"
+            title_cell = sanitize_single_line(cs.title if cs else v.item_id, 140)
+            chars_cell = str(cs.body_chars) if cs is not None else "0"
+            matched_cell = sanitize_single_line(v.matched_repo_file, 80) or "-"
+            reason_cell = sanitize_single_line(v.reason, 220)
+            lines.append(
+                f"| `{v.item_id}` | `{feed_cell}` | {title_cell} | `{chars_cell}` | "
+                f"`{v.verdict}` | `{matched_cell}` | {reason_cell} |"
+            )
+
+    if result.stage2_results:
+        lines.extend(
+            [
+                "",
+                "### Stage 2 Deep Delta Verdicts",
+                "",
+                "| Item ID | Title | `body_chars` | Score | Disposition | Target Files | Gate / Evaluation Summary |",
+                "|---|---|---:|---:|---|---|---|",
+            ]
+        )
+        for s in result.stage2_results:
+            cs = candidates_by_id.get(s.item.item_id)
+            chars_cell = str(cs.body_chars if cs is not None else len(s.item.body))
+            safe_title = sanitize_single_line(s.item.title, 140)
+            targets = ", ".join(filter_allowed_repo_paths(s.analysis.target_repo_files)) or "radar/"
+            summary_cell = sanitize_single_line(
+                s.gate_failure_reason or s.analysis.what_is_net_new, 220
+            )
+            lines.append(
+                f"| `{s.item.item_id}` | {safe_title} | `{chars_cell}` | `{s.score}/10` | "
+                f"`{s.disposition}` | `{targets}` | {summary_cell} |"
+            )
 
     if result.staged_items:
         lines.extend(["", "### Survivors Crossing the Bar", ""])
@@ -103,6 +203,7 @@ def run_pipeline(
     seen: SeenState,
     mode: str = "observe",
     fast_lane_url: str | None = None,
+    force: bool = False,
     llm_client: RadarLLMClient | None = None,
     http_get: Callable[[str], tuple[str, bytes]] | None = None,
     offline_candidates: list[CandidateItem] | None = None,
@@ -114,18 +215,58 @@ def run_pipeline(
     run_at = run_dt.isoformat()
     iso_week = current_iso_week(run_dt)
     excluded = tuple(exclude_repo_files or ())
+    effective_seen = SeenState() if force else seen
 
     feed_summaries: list[FeedFetchSummary] = []
     if offline_candidates is not None:
         candidates = list(offline_candidates)[: config.max_items_per_run]
     elif fast_lane_url:
-        candidates = [
-            build_fast_lane_candidate(fast_lane_url, config=config, http_get=http_get)
-        ]
+        try:
+            fast_candidate = build_fast_lane_candidate(
+                fast_lane_url, config=config, http_get=http_get
+            )
+        except FetchIncompleteError as exc:
+            failed_canon = exc.canonical_url or canonicalize_url(fast_lane_url)
+            incomplete_result = RunResult(
+                run_at=run_at,
+                iso_week=iso_week,
+                mode=mode,  # type: ignore[arg-type]
+                fast_lane_url=fast_lane_url,
+                force=force,
+                status="FETCH_INCOMPLETE",
+                error_code="FETCH_INCOMPLETE",
+                error_message=str(exc),
+                candidate_summaries=[
+                    CandidateSummary(
+                        item_id=make_item_id(failed_canon),
+                        feed_id="fast-lane",
+                        title=exc.title or extract_domain(failed_canon),
+                        url=fast_lane_url,
+                        canonical_url=failed_canon,
+                        body_chars=exc.body_chars,
+                        word_count=exc.word_count,
+                        enrichment_status="fetch_incomplete",
+                    )
+                ],
+                candidates_fetched=0,
+            )
+            incomplete_result.summary_markdown = build_job_summary_markdown(incomplete_result)
+            return incomplete_result
+
+        seen_urls = {rec.canonical_url for rec in effective_seen.items.values()}
+        initial_id = make_item_id(canonicalize_url(fast_lane_url))
+        if not force and (
+            fast_candidate.item_id in effective_seen.items
+            or initial_id in effective_seen.items
+            or fast_candidate.canonical_url in seen_urls
+        ):
+            candidates = []
+        else:
+            candidates = [fast_candidate]
     else:
         registry = load_feed_registry(config.feeds_path)
         candidates, feed_summaries = fetch_candidates(
-            registry, seen, config, now=run_dt, http_get=http_get
+            registry, effective_seen, config, now=run_dt, http_get=http_get
         )
 
     result = RunResult(
@@ -133,7 +274,9 @@ def run_pipeline(
         iso_week=iso_week,
         mode=mode,  # type: ignore[arg-type]
         fast_lane_url=fast_lane_url,
+        force=force,
         feed_summaries=feed_summaries,
+        candidate_summaries=[_to_candidate_summary(c) for c in candidates],
         candidates_fetched=len(candidates),
     )
 
@@ -160,6 +303,7 @@ def run_pipeline(
 
     # Stage 1: batched zero-tool triage (up to 10 items per call)
     by_id = {c.item_id: c for c in candidates}
+    summaries_by_id = {cs.item_id: cs for cs in result.candidate_summaries}
     verdicts_by_id: dict[str, Stage1ItemVerdict] = {}
     batch_size = max(1, config.max_stage1_batch_size)
 
@@ -181,17 +325,21 @@ def run_pipeline(
 
     result.stage1_reviewed = len(verdicts_by_id)
 
-    # Mark all reviewed candidates seen (even dropped ones) so future runs skip them
-    for item_id, verdict in verdicts_by_id.items():
-        item = by_id[item_id]
-        result.new_seen_records[item_id] = SeenRecord(
-            canonical_url=item.canonical_url,
-            title_hash=item.title_hash,
-            content_hash=item.content_hash,
-            feed_id=item.feed_id,
-            first_seen_at=run_at,
-            verdict=verdict.verdict,
-        )
+    # Mark reviewed candidates seen except manual observe fast-lane test runs
+    skip_seen_burn = bool(fast_lane_url) and mode == "observe"
+    if not skip_seen_burn:
+        for item_id, verdict in verdicts_by_id.items():
+            item = by_id[item_id]
+            if item.feed_id == "fast-lane" and mode == "observe":
+                continue
+            result.new_seen_records[item_id] = SeenRecord(
+                canonical_url=item.canonical_url,
+                title_hash=item.title_hash,
+                content_hash=item.content_hash,
+                feed_id=item.feed_id,
+                first_seen_at=run_at,
+                verdict=verdict.verdict,
+            )
 
     survivor_verdicts = [v for v in result.stage1_verdicts if v.verdict == "SURVIVOR"][
         : config.max_stage2_survivors
@@ -203,8 +351,14 @@ def run_pipeline(
         item = by_id[sv.item_id]
         if offline_candidates is None:
             item = enrich_survivor_body(item, config=config, http_get=http_get)
+            by_id[sv.item_id] = item
+            if sv.item_id in summaries_by_id:
+                summaries_by_id[sv.item_id].body_chars = len(item.body)
+                summaries_by_id[sv.item_id].word_count = len(item.body.split())
+                summaries_by_id[sv.item_id].enrichment_status = item.enrichment_status
             if item.enrichment_status == "fetch_blocked":
-                result.new_seen_records[item.item_id].verdict = "FETCH_BLOCKED"
+                if item.item_id in result.new_seen_records:
+                    result.new_seen_records[item.item_id].verdict = "FETCH_BLOCKED"
                 continue
 
         target_files = [sv.matched_repo_file] if sv.matched_repo_file else []
@@ -228,7 +382,8 @@ def run_pipeline(
             high_signal_threshold=config.high_signal_threshold,
         )
         result.stage2_results.append(scored)
-        result.new_seen_records[item.item_id].verdict = f"{scored.disposition}:{scored.score}"
+        if item.item_id in result.new_seen_records:
+            result.new_seen_records[item.item_id].verdict = f"{scored.disposition}:{scored.score}"
         if scored.disposition in ("STAGE", "HIGH_SIGNAL"):
             staged.append(scored)
 
@@ -305,6 +460,7 @@ def _cmd_run(args: argparse.Namespace) -> int:
         seen=seen,
         mode=args.mode,
         fast_lane_url=args.url or None,
+        force=bool(getattr(args, "force", False)),
         offline_candidates=offline_candidates,
         exclude_repo_files=args.withhold or [],
     )
@@ -316,6 +472,8 @@ def _cmd_run(args: argparse.Namespace) -> int:
         summary_path.parent.mkdir(parents=True, exist_ok=True)
         summary_path.write_text(result.summary_markdown, encoding="utf-8")
     print(result.summary_markdown)
+    if result.status == "FETCH_INCOMPLETE" or result.error_code == "FETCH_INCOMPLETE":
+        return 1
     return 0
 
 
@@ -388,6 +546,11 @@ def build_parser() -> argparse.ArgumentParser:
     p_run.add_argument("--output", required=True, help="Path to write validated run-result.json.")
     p_run.add_argument("--summary-out", default="", help="Optional path to write Job Summary markdown.")
     p_run.add_argument("--url", default="", help="Optional single URL for manual fast-lane triage.")
+    p_run.add_argument(
+        "--force",
+        action="store_true",
+        help="Bypass seen.json deduplication to force re-evaluation.",
+    )
     p_run.add_argument("--offline-items", default="", help="Optional JSON list of CandidateItems for offline runs.")
     p_run.add_argument("--withhold", action="append", default=[], help="Withhold repo files (calibration testing).")
     p_run.set_defaults(func=_cmd_run)

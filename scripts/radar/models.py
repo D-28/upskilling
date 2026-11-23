@@ -57,9 +57,28 @@ class CandidateItem(BaseModel):
     body: str = ""
     title_hash: str = ""
     content_hash: str = ""
-    enrichment_status: Literal["feed_sufficient", "enriched", "fetch_blocked", "not_needed"] = (
-        "not_needed"
-    )
+    enrichment_status: Literal[
+        "feed_sufficient",
+        "enriched",
+        "fetch_blocked",
+        "fetch_incomplete",
+        "not_needed",
+    ] = "not_needed"
+
+
+class CandidateSummary(BaseModel):
+    """Compact per-candidate extraction metadata for self-contained Job Summaries."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    item_id: str = Field(pattern=ITEM_ID_PATTERN)
+    feed_id: str
+    title: str
+    url: str = ""
+    canonical_url: str
+    body_chars: int = 0
+    word_count: int = 0
+    enrichment_status: str = "not_needed"
 
 
 Stage1VerdictCode = Literal[
@@ -236,7 +255,12 @@ class RunResult(BaseModel):
     iso_week: str = Field(pattern=ISO_WEEK_PATTERN)
     mode: Literal["observe", "enforce", "bootstrap"]
     fast_lane_url: str | None = None
+    force: bool = False
+    status: Literal["OK", "FETCH_INCOMPLETE"] = "OK"
+    error_code: str = ""
+    error_message: str = ""
     feed_summaries: list[FeedFetchSummary] = Field(default_factory=list)
+    candidate_summaries: list[CandidateSummary] = Field(default_factory=list)
     candidates_fetched: int = 0
     stage1_reviewed: int = 0
     stage1_verdicts: list[Stage1ItemVerdict] = Field(default_factory=list)
