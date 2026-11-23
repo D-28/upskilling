@@ -35,9 +35,9 @@ A living tracker for ideas, hands-on experiments, toolkit upgrades, and Staff SW
 Goal: catch leading-edge agentic engineering shifts within ~24h without X-scrolling noise, alert fatigue, or `radar/` bloat—dogfooding [`playbooks/harness-loop-graph.md`](playbooks/harness-loop-graph.md), [`playbooks/verification-engineering.md`](playbooks/verification-engineering.md), [`playbooks/model-effort-economics.md`](playbooks/model-effort-economics.md), [`playbooks/programmatic-tooling-mcp.md`](playbooks/programmatic-tooling-mcp.md), and [`templates/undo-price-gating.md`](templates/undo-price-gating.md).
 
 ### Locked Design Decisions
-- [x] **Execution runtime & LLM billing:** GitHub Actions `cron` + billed **Gemini Developer API** key (paid tier for data privacy; defaults to dynamic `-latest` aliases `gemini-flash-lite-latest` / `gemini-flash-latest` over `v1beta` with `response.model_version` trace logging, overridable via repo vars `STAGE1_MODEL` / `STAGE2_MODEL`).
-- [x] **Ingestion vs. review cadence:** Daily sweep updating **one rolling weekly Draft PR** (silent no-op on null weeks; `high-signal` label if score ≥ 9/10).
-- [x] **Source coverage:** Scrape-free primary feeds + **curated aggregators** (HN Algolia API with score/keyword threshold, Simon Willison linklog RSS, Addy Osmani Substack RSS) + **owner-only `workflow_dispatch` fast-lane** for ad-hoc X links.
+- [x] **Execution runtime & LLM billing:** GitHub Actions `cron` + billed **Gemini Developer API** key (paid tier for data privacy; defaults to `gemini-flash-lite-latest` (`LOW`) for Stage 1, `gemini-flash-latest` (`HIGH`) for Stage 2, and `gemini-4-neon` (`HIGH`) for Stage 3 over `v1beta` with `response.model_version` trace logging and `$0.50/run` cap, overridable via repo vars `STAGE1_MODEL` / `STAGE2_MODEL` / `STAGE3_MODEL`).
+- [x] **Ingestion vs. review cadence:** Mon–Sat daily sweeps buffer survivors (`score >= 7/10`) in `radar-state/pending-candidates.json` (`0` PRs). Sunday runs (or `run_coherence_gate=true`) drain the buffer into the Stage 3 `gemini-4-neon` Coherence Gate, defaulting to `REJECT_ALL` (`weekly-audits.md`, `0` PRs) and opening **one weekly Draft PR** only on `APPROVE_SYNTHESIS` (`high-signal` label if score `>= 9/10`).
+- [x] **Source coverage:** Scrape-free primary feeds + **curated aggregators** (HN Algolia API with score/keyword threshold, Simon Willison linklog RSS, Addy Osmani Substack RSS) + **owner-only `workflow_dispatch` fast-lane** with Plan B resolution, `FETCH_INCOMPLETE` fail-closed gate, and direct Stage 3 routing.
 - [x] **Feed-list governance:** `radar/feeds.yaml` on `main` is strictly human-edited (never auto-mutated by untrusted web input); recurring unsubscribed domains are surfaced as promotion candidates after **≥ 2 human-merged items**.
 
 ### Phase 0 — Harness Contract, Scoring Rubric & Calibration Fixture (`[B]`, `[C]`, `[F]`)
@@ -58,8 +58,8 @@ Goal: catch leading-edge agentic engineering shifts within ~24h without X-scroll
 
 ### Phase 3 — Fail-Closed Delivery, Safe Rollout (`observe → enforce`) & Fast-Lane Intake (`[B]`, [`templates/undo-price-gating.md`](templates/undo-price-gating.md))
 - [x] Add 2-job privilege-separated GitHub Actions workflow ([`.github/workflows/radar-ingest.yml`](.github/workflows/radar-ingest.yml)) + CI workflow ([`.github/workflows/radar-ci.yml`](.github/workflows/radar-ci.yml)) + setup guide ([`docs/radar-setup.md`](docs/radar-setup.md)).
-- [ ] Configure `GEMINI_API_KEY` secret + *"Allow GitHub Actions to create and approve pull requests"* in GitHub repo settings and run Day-1 `mode=bootstrap` via `workflow_dispatch`.
-- [ ] **2-week `observe` rollout (`[B]`):** Audit Actions Job Summaries for 2 weeks, tune thresholds/keywords if needed, then set repo variable `RADAR_MODE=enforce`.
+- [x] Configure `GEMINI_API_KEY` secret + *"Allow GitHub Actions to create and approve pull requests"* in GitHub repo settings and seed `radar-state` (`bootstrap` + scheduled/manual runs live).
+- [ ] **2-week `observe` rollout (`[B]`):** Audit Actions Job Summaries and `radar-state/weekly-audits.md` for 2 weeks, tune thresholds/keywords if needed, then set repo variable `RADAR_MODE=enforce`.
 
 ### Phase 4 — Empirical Feed Health, Promotion & Pruning Loop (`[B]`, `[F]`)
 - [x] Implement automated PR merge/close telemetry reconciliation and quarterly prune/≥2-hit promotion report generation ([`scripts/radar/reconcile_prs.py`](scripts/radar/reconcile_prs.py), [`scripts/radar/state.py`](scripts/radar/state.py)).
@@ -67,9 +67,9 @@ Goal: catch leading-edge agentic engineering shifts within ~24h without X-scroll
 
 ### Phase 5 — Weekly Coherence Gate (`gemini-4-neon`) & Fail-Closed Fast-Lane (`[C]`, `[G]`)
 Spec & vertical tickets: [`docs/specs/coherence-gate-and-fast-lane.md`](docs/specs/coherence-gate-and-fast-lane.md) · [`docs/adr/0001-coherence-gate-and-fast-lane.md`](docs/adr/0001-coherence-gate-and-fast-lane.md) · [`docs/GLOSSARY.md`](docs/GLOSSARY.md).
-- [x] **Ticket 1:** Fast-Lane Plan B resolution, `FETCH_INCOMPLETE` fail-closed gate, `force` / non-burning `observe` fast-lane, and rich GitHub Actions Job Summary tables.
-- [x] **Ticket 2:** Mon–Sat holding buffer (`radar-state/pending-candidates.json`) decoupling daily sweeps from Sunday weekly gate runs.
-- [x] **Ticket 3:** Stage 3 `gemini-4-neon` (`HIGH`) full-repo Coherence Gate (score-blind de-anchoring, 6 Systemic Poison checks, zero-PR default + `weekly-audits.md`, fast-lane Stage 1 bypass).
+- [x] **Ticket 1:** Fast-Lane Plan B resolution, `FETCH_INCOMPLETE` fail-closed gate, `force` / non-burning `observe` fast-lane, and rich GitHub Actions Job Summary tables (PR #9).
+- [x] **Ticket 2:** Mon–Sat holding buffer (`radar-state/pending-candidates.json`) decoupling daily sweeps from Sunday weekly gate runs (PR #10).
+- [x] **Ticket 3:** Stage 3 `gemini-4-neon` (`HIGH`) full-repo Coherence Gate (score-blind de-anchoring, 6 Systemic Poison checks, zero-PR default + `weekly-audits.md`, fast-lane Stage 1 bypass; PR #11 + live stress-test verified in run `#45198504002` + `800`/`500` render-cap polish in PR #12).
 - [ ] **Future consideration (if needed):** If Plan B repeatedly fails (`FETCH_INCOMPLETE`) on paywalled or X-Article links, add an Antigravity local browser/CLI fallback (`$0` marginal API spend using Google AI Pro/Ultra sub) that evaluates logged-in page text locally against the Coherence Gate.
 
 ---
@@ -101,5 +101,5 @@ Spec & vertical tickets: [`docs/specs/coherence-gate-and-fast-lane.md`](docs/spe
 - [ ] **Quarterly review (`2027-02-18`):**
   - Re-evaluate [`radar/2026-11-18-digest.md`](radar/2026-11-18-digest.md) — promote proven items into `playbooks/` / `templates/`, archive or delete superseded notes.
   - Refresh the dated *"Snapshot as of November 2026"* model lineup in [`playbooks/model-effort-economics.md`](playbooks/model-effort-economics.md) and Code Mode constraints in [`playbooks/programmatic-tooling-mcp.md`](playbooks/programmatic-tooling-mcp.md).
-  - Review `radar-state` feed-health telemetry (once live) and prune stale, noisy, or broken sources from `feeds.yaml`.
+  - Review `radar-state` feed-health telemetry and `weekly-audits.md` to prune stale, noisy, or broken sources from `radar/feeds.yaml`.
   - Prune unused rules or noisy checklist items across `skills/` and `templates/`.
