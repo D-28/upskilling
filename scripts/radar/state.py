@@ -203,7 +203,7 @@ def format_weekly_audit_entry(result: RunResult) -> str:
     route = "fast-lane" if result.fast_lane_url else "weekly-coherence-gate"
     run_date = sanitize_single_line(result.run_at[:10], 20)
     marker = f"<!-- radar-audit: {result.iso_week} run_at: {sanitize_single_line(result.run_at, 64)} -->"
-    exec_summary = sanitize_single_line(verdict.executive_summary, 400)
+    exec_summary = sanitize_single_line(verdict.executive_summary, 800)
 
     lines = [
         marker,
@@ -227,7 +227,7 @@ def format_weekly_audit_entry(result: RunResult) -> str:
             poisons_cell = ", ".join(audit.poisons.active_poisons()) or "none"
             related_cell = ", ".join(audit.related_item_ids) or "-"
             files_cell = ", ".join(filter_allowed_repo_paths(audit.affected_repo_files)) or "-"
-            rationale_cell = sanitize_single_line(audit.rationale, 220)
+            rationale_cell = sanitize_single_line(audit.rationale, 500)
             lines.append(
                 f"| `{audit.item_id}` | {title_cell} | `{audit.verdict}` | `{poisons_cell}` | "
                 f"`{related_cell}` | `{files_cell}` | {rationale_cell} |"

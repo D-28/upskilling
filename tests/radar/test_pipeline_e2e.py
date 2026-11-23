@@ -1091,6 +1091,22 @@ def test_stage3_de_anchored_inputs_full_repo_and_prompt_wish_poison_rejection(
 
     captured_stage3: dict[str, object] = {}
 
+    long_exec_summary = (
+        "Stage 3 rejects the Prompt-Wish Poison candidate and approves zero repository changes. "
+        "Appending 60 lines of emphatic SQL reminder prose to AGENTS.md violates Write It Twice "
+        "and bloats every session's Smart Zone without adding a deterministic lint or hook wall. "
+        "Existing playbooks already require automated PreToolUse and CI checks for destructive "
+        "database migrations. Preserving zero-PR discipline keeps the repository baseline sharp."
+    )
+    long_rationale = (
+        "Asks the model to remember SQL migration safety in 60 lines of prose instead of "
+        "enforcing a deterministic Write It Twice lint, migration check, or PreToolUse hook. "
+        "Purely additive reminder rules degrade attention budget and fail silently under long "
+        "context windows without improving verifiable safety guarantees."
+    )
+    assert 420 <= len(long_exec_summary) <= 800
+    assert 300 <= len(long_rationale) <= 500
+
     class _PoisonAuditStubLLM:
         def triage_stage1_batch(self, items, repo_inventory):
             raise AssertionError("Stage 1 should not run when draining empty daily feed.")
@@ -1108,7 +1124,7 @@ def test_stage3_de_anchored_inputs_full_repo_and_prompt_wish_poison_rejection(
             captured_stage3["payload"] = _format_stage3_user_payload(candidates, nonce="deadbeef")
             verdict = Stage3CoherenceVerdict(
                 decision="REJECT_ALL",
-                executive_summary="Rejected Prompt-Wish Poison candidate; use deterministic hooks instead.",
+                executive_summary=long_exec_summary,
                 item_audits=[
                     Stage3ItemAudit(
                         item_id=poison_item.item_id,
@@ -1118,7 +1134,7 @@ def test_stage3_de_anchored_inputs_full_repo_and_prompt_wish_poison_rejection(
                             prompt_wish_poison=True,
                             attention_budget_poison=True,
                         ),
-                        rationale="Asks model to remember SQL safety in 60 lines of prose instead of Write It Twice lint/hook enforcement.",
+                        rationale=long_rationale,
                     )
                 ],
                 syntheses=[],
@@ -1159,13 +1175,15 @@ def test_stage3_de_anchored_inputs_full_repo_and_prompt_wish_poison_rejection(
     assert "docs/GLOSSARY.md" in baseline_seen
     assert "docs/adr/0001-coherence-gate-and-fast-lane.md" in baseline_seen
 
-    # 2. Prove Stage 3 rejected Prompt-Wish Poison with 0 PRs and logged to weekly-audits.md
+    # 2. Prove Stage 3 rejected Prompt-Wish Poison with 0 PRs and logged to weekly-audits.md untruncated
     assert sun_res.stage3_verdict is not None
     assert sun_res.stage3_verdict.decision == "REJECT_ALL"
     assert sun_res.staged_items == []
     assert "REJECT_ALL" in sun_res.summary_markdown
     assert "prompt_wish_poison" in sun_res.summary_markdown
     assert "REJECT_ENTROPY" in sun_res.summary_markdown
+    assert long_exec_summary in sun_res.summary_markdown
+    assert long_rationale in sun_res.summary_markdown
 
     run_result_path = tmp_path / "poison-run-result.json"
     run_result_path.write_text(sun_res.model_dump_json(indent=2), encoding="utf-8")
@@ -1191,6 +1209,8 @@ def test_stage3_de_anchored_inputs_full_repo_and_prompt_wish_poison_rejection(
     assert "REJECT_ALL" in audit_md
     assert "REJECT_ENTROPY" in audit_md
     assert "prompt_wish_poison" in audit_md
+    assert long_exec_summary in audit_md
+    assert long_rationale in audit_md
 
     # 3. Deterministic Python guardrail: even if an LLM erroneously returns APPROVE_SYNTHESIS
     # while prompt_wish_poison=True, enforce_stage3_coherence_guardrails forces REJECT_ALL.
