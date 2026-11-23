@@ -1,7 +1,7 @@
 """Backward-compatible state persistence, PR outcome reconciliation, and feed health reporting.
 
-State files (`seen.json`, `feed-health.json`, `pending-candidates.json`) live on the dedicated
-orphan branch `radar-state` so `main` remains clean and branch-protected.
+State files (`seen.json`, `feed-health.json`, `pending-candidates.json`, `weekly-audits.md`)
+live on the dedicated orphan branch `radar-state` so `main` remains clean and branch-protected.
 """
 
 from __future__ import annotations
@@ -23,7 +23,8 @@ from scripts.radar.models import (
     RunResult,
     SeenState,
 )
-from scripts.radar.security import redact_secrets
+from scripts.radar.rubric import approved_stage3_item_ids
+from scripts.radar.security import filter_allowed_repo_paths, redact_secrets, sanitize_single_line
 
 
 def load_seen_state(path: Path) -> SeenState:
@@ -166,11 +167,124 @@ def apply_run_result_to_state(
             stats = updated_health.feeds.setdefault(rec.feed_id, FeedStats())
             stats.stage1_survivors += 1
 
+    staged_ids: set[str] = set()
     for staged in result.staged_items:
+        staged_ids.add(staged.item.item_id)
         stats = updated_health.feeds.setdefault(staged.item.feed_id, FeedStats())
         stats.stage2_staged += 1
 
+    # Also count direct fast-lane Stage 3 approvals that bypassed Stage 2
+    summaries_by_id = {cs.item_id: cs for cs in result.candidate_summaries}
+    for iid in approved_stage3_item_ids(result.stage3_verdict):
+        if iid in staged_ids:
+            continue
+        cs = summaries_by_id.get(iid)
+        if cs and cs.feed_id:
+            stats = updated_health.feeds.setdefault(cs.feed_id, FeedStats())
+            stats.stage2_staged += 1
+
     return updated_seen, updated_health
+
+
+def load_weekly_audits(path: Path) -> str:
+    """Load weekly-audits.md safely with backward-compatible empty default when absent."""
+    if not path.is_file():
+        return ""
+    return path.read_text(encoding="utf-8")
+
+
+def format_weekly_audit_entry(result: RunResult) -> str:
+    """Render a sanitized Markdown audit section for `radar-state/weekly-audits.md`."""
+    verdict = result.stage3_verdict
+    if verdict is None:
+        return ""
+
+    summaries_by_id = {cs.item_id: cs for cs in result.candidate_summaries}
+    route = "fast-lane" if result.fast_lane_url else "weekly-coherence-gate"
+    run_date = sanitize_single_line(result.run_at[:10], 20)
+    marker = f"<!-- radar-audit: {result.iso_week} run_at: {sanitize_single_line(result.run_at, 64)} -->"
+    exec_summary = sanitize_single_line(verdict.executive_summary, 400)
+
+    lines = [
+        marker,
+        f"## {result.iso_week} — `{verdict.decision}` ({run_date})",
+        "",
+        f"- **Run Timestamp:** `{sanitize_single_line(result.run_at, 64)}` · **Mode:** `{result.mode}` · **Route:** `{route}`",
+        f"- **Executive Summary:** {exec_summary}",
+        "",
+    ]
+
+    if verdict.item_audits:
+        lines.extend(
+            [
+                "| Item ID | Title | Verdict | Systemic Poisons | Related IDs | Affected Files | Rationale |",
+                "|---|---|---|---|---|---|---|",
+            ]
+        )
+        for audit in verdict.item_audits:
+            cs = summaries_by_id.get(audit.item_id)
+            title_cell = sanitize_single_line(cs.title if cs else audit.item_id, 120)
+            poisons_cell = ", ".join(audit.poisons.active_poisons()) or "none"
+            related_cell = ", ".join(audit.related_item_ids) or "-"
+            files_cell = ", ".join(filter_allowed_repo_paths(audit.affected_repo_files)) or "-"
+            rationale_cell = sanitize_single_line(audit.rationale, 220)
+            lines.append(
+                f"| `{audit.item_id}` | {title_cell} | `{audit.verdict}` | `{poisons_cell}` | "
+                f"`{related_cell}` | `{files_cell}` | {rationale_cell} |"
+            )
+        lines.append("")
+
+    if verdict.syntheses:
+        lines.append("### Approved Syntheses")
+        lines.append("")
+        for prop in verdict.syntheses:
+            p_title = sanitize_single_line(prop.title, 160)
+            src_ids = ", ".join(prop.source_item_ids)
+            targets = ", ".join(filter_allowed_repo_paths(prop.target_repo_files)) or "radar/"
+            lines.append(f"- **{p_title}** (`{src_ids}`) -> `{targets}`")
+        lines.append("")
+
+    lines.append("---")
+    lines.append("")
+    return "\n".join(lines)
+
+
+def append_weekly_audit(path: Path, result: RunResult) -> bool:
+    """Idempotently create or append a Stage 3 audit entry to `radar-state/weekly-audits.md`.
+
+    Returns True when a new audit entry was written, False when skipped or already logged.
+    """
+    if result.stage3_verdict is None:
+        return False
+
+    marker = f"<!-- radar-audit: {result.iso_week} run_at: {sanitize_single_line(result.run_at, 64)} -->"
+    existing = load_weekly_audits(path).strip()
+    if marker in existing:
+        return False
+
+    entry = format_weekly_audit_entry(result)
+    if not entry:
+        return False
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    if not existing:
+        header = "\n".join(
+            [
+                "# Weekly Coherence Gate Audit Log",
+                "",
+                "Append-only log of Stage 3 (`gemini-4-neon`, `HIGH`) systemic coherence decisions, "
+                "poison rejections, and approved syntheses on orphan branch `radar-state`.",
+                "",
+                "---",
+                "",
+            ]
+        )
+        content = header + entry
+    else:
+        content = existing + "\n\n" + entry
+
+    path.write_text(content.rstrip() + "\n", encoding="utf-8")
+    return True
 
 
 def reconcile_pr_outcome(

@@ -8,12 +8,21 @@ from pathlib import Path
 from types import SimpleNamespace
 
 from scripts.radar.cli import apply_run_result_files, run_pipeline
-from scripts.radar.config import PipelineConfig, requires_v1beta, validate_thinking_level
+from scripts.radar.config import (
+    DEFAULT_STAGE3_MODEL,
+    DEFAULT_STAGE3_THINKING,
+    MAX_RUN_COST_USD,
+    PipelineConfig,
+    estimate_cost_usd,
+    requires_v1beta,
+    validate_thinking_level,
+)
 from scripts.radar.fetcher import load_feed_registry
-from scripts.radar.inventory import build_repo_inventory
-from scripts.radar.llm import GeminiRadarClient
+from scripts.radar.inventory import build_repo_inventory, load_full_repo_baseline
+from scripts.radar.llm import GeminiRadarClient, _format_stage3_user_payload, de_anchor_candidate
 from scripts.radar.models import (
     CandidateItem,
+    DeAnchoredCandidate,
     FeedHealthState,
     FeedStats,
     LLMCallTrace,
@@ -22,12 +31,20 @@ from scripts.radar.models import (
     Stage1BatchResponse,
     Stage1ItemVerdict,
     Stage2Analysis,
+    Stage3CoherenceVerdict,
+    Stage3ItemAudit,
+    Stage3SynthesisProposal,
+    SystemicPoisonFlags,
 )
-from scripts.radar.rubric import parse_radar_markers
+from scripts.radar.rubric import (
+    enforce_stage3_coherence_guardrails,
+    parse_radar_markers,
+)
 from scripts.radar.state import (
     generate_feed_health_report,
     load_feed_health,
     load_seen_state,
+    load_weekly_audits,
     reconcile_pr_outcome,
 )
 
@@ -36,31 +53,63 @@ FIXTURE_PATH = Path(__file__).resolve().parent / "fixtures" / "nov2026_replay.js
 
 
 def test_dynamic_latest_alias_routing_and_zero_tool_config() -> None:
+    assert DEFAULT_STAGE3_MODEL == "gemini-4-neon"
+    assert DEFAULT_STAGE3_THINKING == "HIGH"
+    assert MAX_RUN_COST_USD == 0.50
     assert requires_v1beta("gemini-flash-lite-latest") is True
     assert requires_v1beta("gemini-flash-latest") is True
     assert requires_v1beta("gemini-pro-latest") is True
+    assert requires_v1beta("gemini-4-neon") is True
     assert requires_v1beta("gemini-3.8-flash") is False
     assert validate_thinking_level("gemini-3.8-flash", "MINIMAL") == "LOW"
+    assert validate_thinking_level("gemini-4-neon", "MINIMAL") == "LOW"
     assert validate_thinking_level("gemini-flash-lite-latest", "MINIMAL") == "MINIMAL"
+    assert estimate_cost_usd("gemini-4-neon", 1_000_000, 0, 1_000_000) == 18.0
+    assert estimate_cost_usd("gemini-4-neon", 1_000_000, 1_000_000, 0) == 0.15
+
+    baseline = load_full_repo_baseline(REPO_ROOT)
+    assert "playbooks/harness-loop-graph.md" in baseline
+    assert "skills/ste-clarity/SKILL.md" in baseline
+    assert "templates/REVIEW.md.template" in baseline
+    assert "docs/GLOSSARY.md" in baseline
+    assert "docs/adr/0001-coherence-gate-and-fast-lane.md" in baseline
 
     captured: list[dict[str, object]] = []
 
     class _FakeModels:
         def generate_content(self, *, model, contents, config):
-            captured.append({"model": model, "config": config})
-            payload = Stage1BatchResponse(
-                verdicts=[
-                    Stage1ItemVerdict(
-                        item_id="111111111111",
-                        verdict="ALREADY_COVERED",
-                        matched_repo_file="playbooks/verification-engineering.md",
-                        reason="Covered in verification playbook.",
-                    )
-                ]
-            ).model_dump_json()
+            captured.append({"model": model, "contents": contents, "config": config})
+            if model == DEFAULT_STAGE3_MODEL:
+                payload = Stage3CoherenceVerdict(
+                    decision="REJECT_ALL",
+                    executive_summary="Item already covered in baseline.",
+                    item_audits=[
+                        Stage3ItemAudit(
+                            item_id="111111111111",
+                            verdict="SUBSUMED_BY",
+                            affected_repo_files=["playbooks/verification-engineering.md"],
+                            poisons=SystemicPoisonFlags(),
+                            rationale="Already covered in verification playbook.",
+                        )
+                    ],
+                    syntheses=[],
+                ).model_dump_json()
+                model_ver = "gemini-4-neon-2026-11"
+            else:
+                payload = Stage1BatchResponse(
+                    verdicts=[
+                        Stage1ItemVerdict(
+                            item_id="111111111111",
+                            verdict="ALREADY_COVERED",
+                            matched_repo_file="playbooks/verification-engineering.md",
+                            reason="Covered in verification playbook.",
+                        )
+                    ]
+                ).model_dump_json()
+                model_ver = "gemini-3.5-flash-lite-2026-11"
             return SimpleNamespace(
                 text=payload,
-                model_version="gemini-3.5-flash-lite-2026-11",
+                model_version=model_ver,
                 usage_metadata=SimpleNamespace(
                     prompt_token_count=2000,
                     cached_content_token_count=0,
@@ -94,6 +143,21 @@ def test_dynamic_latest_alias_routing_and_zero_tool_config() -> None:
     cfg = captured[0]["config"]
     assert getattr(cfg, "tools", None) is None
     assert getattr(cfg, "response_mime_type", None) == "application/json"
+
+    # Verify Stage 3 gemini-4-neon (HIGH) zero-tool call + v1beta routing
+    s3_resp, s3_trace = client.evaluate_stage3_coherence(
+        [de_anchor_candidate(item, source_path="fast_lane_direct")],
+        baseline,
+    )
+    assert s3_resp.decision == "REJECT_ALL"
+    assert s3_trace.stage == "stage3"
+    assert s3_trace.requested_model == "gemini-4-neon"
+    assert s3_trace.thinking_level == "HIGH"
+    assert s3_trace.api_version == "v1beta"
+    s3_cfg = captured[1]["config"]
+    assert getattr(s3_cfg, "tools", None) is None
+    assert getattr(s3_cfg, "response_mime_type", None) == "application/json"
+    assert "docs/GLOSSARY.md" in str(getattr(s3_cfg, "system_instruction", ""))
 
 
 class _InventoryAwareStubLLM:
@@ -195,6 +259,70 @@ class _InventoryAwareStubLLM:
             item_ids=[item.item_id],
         )
         return analysis, trace
+
+    def evaluate_stage3_coherence(
+        self,
+        candidates: list[DeAnchoredCandidate],
+        full_repo_baseline: str,
+    ) -> tuple[Stage3CoherenceVerdict, LLMCallTrace]:
+        has_verif = "=== REPO BASELINE FILE: playbooks/verification-engineering.md ===" in full_repo_baseline
+        audits: list[Stage3ItemAudit] = []
+        syntheses: list[Stage3SynthesisProposal] = []
+
+        for cand in candidates:
+            if cand.item_id == "b22222222222" and not has_verif:
+                audits.append(
+                    Stage3ItemAudit(
+                        item_id=cand.item_id,
+                        verdict="APPROVE_SYNTHESIS",
+                        affected_repo_files=["playbooks/verification-engineering.md"],
+                        poisons=SystemicPoisonFlags(),
+                        rationale="Adds missing base-branch verification gates without systemic poison.",
+                    )
+                )
+                syntheses.append(
+                    Stage3SynthesisProposal(
+                        title="Base-Branch Verification Engineering Playbook",
+                        source_item_ids=[cand.item_id],
+                        target_repo_files=["playbooks/verification-engineering.md"],
+                        unified_thesis="Adds base-branch REVIEW.md loading, diff-triggered checks, and observe-to-enforce commit gates.",
+                        proposed_repo_changes="Create the verification playbook covering E2E, property, and differential tests.",
+                        harmonization_and_pruning="Remove duplicate ad-hoc review notes once the playbook lands.",
+                        career_takeaway="Helps Staff SWEs govern high-velocity AI pull requests safely.",
+                    )
+                )
+            else:
+                audits.append(
+                    Stage3ItemAudit(
+                        item_id=cand.item_id,
+                        verdict="SUBSUMED_BY",
+                        affected_repo_files=["playbooks/verification-engineering.md"],
+                        poisons=SystemicPoisonFlags(),
+                        rationale="Already covered in current playbooks.",
+                    )
+                )
+
+        decision = "APPROVE_SYNTHESIS" if syntheses else "REJECT_ALL"
+        verdict = Stage3CoherenceVerdict(
+            decision=decision,  # type: ignore[arg-type]
+            executive_summary=(
+                "Approved missing verification architecture."
+                if syntheses
+                else "All candidates are already covered in the repository baseline."
+            ),
+            item_audits=audits,
+            syntheses=syntheses,
+        )
+        trace = LLMCallTrace(
+            stage="stage3",
+            requested_model="gemini-4-neon",
+            resolved_model_version="stub-gemini-4-neon",
+            thinking_level="HIGH",
+            api_version="v1beta",
+            estimated_cost_usd=0.04,
+            item_ids=[c.item_id for c in candidates],
+        )
+        return verdict, trace
 
 
 def test_replay_calibration_fixture_and_job2_staging_e2e(tmp_path: Path) -> None:
@@ -333,7 +461,11 @@ def test_pr_reconciliation_and_quarterly_health_report_promotion_and_pruning() -
 
 
 def test_radar_prompts_ste80_and_external_quote_resilience(tmp_path: Path) -> None:
-    from scripts.radar.llm import STAGE1_SYSTEM_PROMPT_TEMPLATE, STAGE2_SYSTEM_PROMPT_TEMPLATE
+    from scripts.radar.llm import (
+        STAGE1_SYSTEM_PROMPT_TEMPLATE,
+        STAGE2_SYSTEM_PROMPT_TEMPLATE,
+        STAGE3_SYSTEM_PROMPT_TEMPLATE,
+    )
     from scripts.radar.rubric import merge_into_weekly_digest, score_stage2_analysis
     from scripts.ste_lint import lint_file
 
@@ -342,7 +474,9 @@ def test_radar_prompts_ste80_and_external_quote_resilience(tmp_path: Path) -> No
     prompt_doc.write_text(
         STAGE1_SYSTEM_PROMPT_TEMPLATE.format(repo_inventory="")
         + "\n\n"
-        + STAGE2_SYSTEM_PROMPT_TEMPLATE.format(target_repo_context=""),
+        + STAGE2_SYSTEM_PROMPT_TEMPLATE.format(target_repo_context="")
+        + "\n\n"
+        + STAGE3_SYSTEM_PROMPT_TEMPLATE.format(full_repo_baseline=""),
         encoding="utf-8",
     )
     p_stats, p_violations = lint_file(prompt_doc, strict_20=False)
@@ -477,6 +611,11 @@ def test_fast_lane_login_wall_exits_nonzero_as_fetch_incomplete_with_zero_llm_an
             llm_calls += 1
             raise AssertionError("LLM Stage 2 must never be called on FETCH_INCOMPLETE")
 
+        def evaluate_stage3_coherence(self, candidates, full_repo_baseline):
+            nonlocal llm_calls
+            llm_calls += 1
+            raise AssertionError("LLM Stage 3 must never be called on FETCH_INCOMPLETE")
+
     target_url = "https://x.com/hwchase17/status/2124181216719151585?a=PWiUEqVg4r5jGgo5Bmk"
     res = run_pipeline(
         config,
@@ -535,7 +674,7 @@ def test_fast_lane_login_wall_exits_nonzero_as_fetch_incomplete_with_zero_llm_an
     assert "FETCH_INCOMPLETE" in cli_summary.read_text(encoding="utf-8")
 
     # Verify Plan B + observe mode never burns seen.json, --force overrides seen.json,
-    # and Job Summary includes fast_lane_url, body_chars, and Stage 1 drop reasons.
+    # verified fast-lane bypasses Stage 1 into Stage 3, and Job Summary includes Stage 3 verdicts.
     full_article_body = " ".join(
         [
             "Verification engineering with base-branch REVIEW.md and deterministic property tests "
@@ -569,12 +708,14 @@ def test_fast_lane_login_wall_exits_nonzero_as_fetch_incomplete_with_zero_llm_an
     )
     assert observe_fast.status == "OK"
     assert observe_fast.candidates_fetched == 1
-    assert observe_fast.stage1_reviewed == 1
+    assert observe_fast.stage1_reviewed == 0
+    assert observe_fast.stage3_verdict is not None
+    assert observe_fast.stage3_verdict.decision == "REJECT_ALL"
     assert observe_fast.new_seen_records == {}
     assert "fast_lane_url=" in observe_fast.summary_markdown
     assert target_url in observe_fast.summary_markdown
     assert "body_chars" in observe_fast.summary_markdown
-    assert "ALREADY_COVERED" in observe_fast.summary_markdown
+    assert "SUBSUMED_BY" in observe_fast.summary_markdown
     assert "Already covered in current playbooks." in observe_fast.summary_markdown
 
     # If the resolved URL is already in seen.json, default run skips it while force=True re-runs it
@@ -584,7 +725,7 @@ def test_fast_lane_login_wall_exits_nonzero_as_fetch_incomplete_with_zero_llm_an
             resolved_id: SeenRecord(
                 canonical_url="https://blog.example.dev/verification-deep-dive",
                 feed_id="fast-lane",
-                verdict="ALREADY_COVERED",
+                verdict="STAGE3:SUBSUMED_BY",
             )
         }
     )
@@ -611,11 +752,15 @@ def test_fast_lane_login_wall_exits_nonzero_as_fetch_incomplete_with_zero_llm_an
         now=datetime(2026, 11, 22, 22, 36, tzinfo=UTC),
     )
     assert forced_res.candidates_fetched == 1
-    assert forced_res.stage1_reviewed == 1
+    assert forced_res.stage1_reviewed == 0
+    assert forced_res.stage3_verdict is not None
     assert "force=true" in forced_res.summary_markdown
 
 
-def test_mon_sat_daily_holding_buffer_and_sunday_coherence_gate_drain(tmp_path: Path) -> None:
+def test_mon_sat_daily_holding_buffer_and_sunday_coherence_gate_drain(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
     from scripts.radar.cli import main
     from scripts.radar.state import load_pending_candidates
 
@@ -731,6 +876,46 @@ def test_mon_sat_daily_holding_buffer_and_sunday_coherence_gate_drain(tmp_path: 
             )
             return analysis, trace
 
+        def evaluate_stage3_coherence(self, candidates, full_repo_baseline):
+            ids = [c.item_id for c in candidates]
+            audits = [
+                Stage3ItemAudit(
+                    item_id=c.item_id,
+                    verdict="COMPOUNDS_WITH",
+                    related_item_ids=[other for other in ids if other != c.item_id],
+                    affected_repo_files=["playbooks/verification-engineering.md"],
+                    poisons=SystemicPoisonFlags(),
+                    rationale="Compounds cleanly into a unified verification and harness synthesis.",
+                )
+                for c in candidates
+            ]
+            verdict = Stage3CoherenceVerdict(
+                decision="APPROVE_SYNTHESIS",
+                executive_summary="Merged buffered candidates into one unified weekly synthesis.",
+                item_audits=audits,
+                syntheses=[
+                    Stage3SynthesisProposal(
+                        title="Unified Verification and Harness Loop Synthesis",
+                        source_item_ids=ids,
+                        target_repo_files=["playbooks/verification-engineering.md"],
+                        unified_thesis="Combines base-branch verification gates with deterministic loop bounds.",
+                        proposed_repo_changes="Add unified gate section and tighten overlapping notes.",
+                        harmonization_and_pruning="Tighten duplicate checklist lines to keep context flat.",
+                        career_takeaway="Strengthens Staff SWE review and FDE runtime guardrails.",
+                    )
+                ],
+            )
+            trace = LLMCallTrace(
+                stage="stage3",
+                requested_model="gemini-4-neon",
+                resolved_model_version="stub-gemini-4-neon",
+                thinking_level="HIGH",
+                api_version="v1beta",
+                estimated_cost_usd=0.05,
+                item_ids=ids,
+            )
+            return verdict, trace
+
     stub_llm = _CadenceStubLLM()
 
     # 1. Tuesday (Mon-Sat) run: buffers 10/10 survivor, drops 6/10 survivor from buffer, opens 0 PRs
@@ -800,11 +985,12 @@ def test_mon_sat_daily_holding_buffer_and_sunday_coherence_gate_drain(tmp_path: 
     assert buffered_state.items["b22222222222"].score == 10
     assert buffered_state.items["c33333333333"].score == 8
 
-    # 3. Sunday / --run-coherence-gate run drains both buffered candidates and clears pending-candidates.json
+    # 3. Sunday / --run-coherence-gate run drains both buffered candidates through Stage 3 and clears pending-candidates.json
     empty_offline = tmp_path / "empty-offline.json"
     empty_offline.write_text("[]\n", encoding="utf-8")
     sun_result_path = tmp_path / "sun-run-result.json"
     sun_summary_path = tmp_path / "sun-summary.md"
+    monkeypatch.setattr("scripts.radar.cli.GeminiRadarClient", lambda cfg: stub_llm)
 
     run_exit = main(
         [
@@ -837,6 +1023,7 @@ def test_mon_sat_daily_holding_buffer_and_sunday_coherence_gate_drain(tmp_path: 
         digest_dir=digest_dir,
     )
     assert sun_outcome["run_coherence_gate"] is True
+    assert sun_outcome["stage3_decision"] == "APPROVE_SYNTHESIS"
     assert sun_outcome["staged_count"] == 2
     assert sun_outcome["added_to_digest"] == 2
     assert sun_outcome["pending_count"] == 0
@@ -846,8 +1033,582 @@ def test_mon_sat_daily_holding_buffer_and_sunday_coherence_gate_drain(tmp_path: 
     cleared_pending = load_pending_candidates(pending_path)
     assert cleared_pending.items == {}
 
-    # Weekly digest file now exists with both drained survivors ordered by score descending
+    # Weekly digest file now exists with both drained survivors merged cleanly
     digest_file = Path(str(sun_outcome["digest_path"]))
     assert digest_file.is_file()
     markers = parse_radar_markers(digest_file.read_text(encoding="utf-8"))
-    assert [m[0] for m in markers] == ["b22222222222", "c33333333333"]
+    assert {m[0] for m in markers} == {"b22222222222", "c33333333333"}
+
+
+def test_stage3_de_anchored_inputs_full_repo_and_prompt_wish_poison_rejection(
+    tmp_path: Path,
+) -> None:
+    from scripts.radar.models import PendingCandidate, PendingCandidatesState
+    from scripts.radar.state import load_pending_candidates, save_pending_candidates
+
+    fixture = json.loads(FIXTURE_PATH.read_text(encoding="utf-8"))
+    poison_item = CandidateItem.model_validate(fixture["stage3_coherence_cases"]["prompt_wish_poison"])
+    config = PipelineConfig(repo_root=REPO_ROOT, feeds_path=REPO_ROOT / "radar" / "feeds.yaml")
+
+    # Seed pending-candidates.json with an anchored Stage 2 survivor (10/10 HIGH_SIGNAL)
+    # whose Stage 2 prose even attempts to mention "10/10" and "HIGH_SIGNAL".
+    pending_path = tmp_path / "state" / "pending-candidates.json"
+    seen_path = tmp_path / "state" / "seen.json"
+    health_path = tmp_path / "state" / "feed-health.json"
+    audits_path = tmp_path / "state" / "weekly-audits.md"
+    digest_dir = tmp_path / "radar"
+
+    anchored_analysis = Stage2Analysis(
+        item_id=poison_item.item_id,
+        passes_net_new_delta_gate=True,
+        passes_substance_gate=True,
+        counterargument_to_drop="Even at 8/10 this relies on prose reminders instead of hooks.",
+        dimensions=RubricDimensions(
+            delta_novelty=2, durability=2, actionability=2, evidence_quality=2, career_leverage=2
+        ),
+        target_repo_files=["templates/AGENTS.md.template"],
+        what_is_net_new="Scored 10/10 HIGH_SIGNAL for 60 lines of SQL reminder rules in AGENTS.md.",
+        proposed_refinement="Add 7/10 reminder checklist telling agents to remember SQL safety.",
+        career_takeaway="Claims to reduce production DB incidents.",
+        evidence_quote="Always remember to inspect table locks before running migrations.",
+    )
+    save_pending_candidates(
+        pending_path,
+        PendingCandidatesState(
+            updated_at="2026-11-21T12:00:00+00:00",
+            items={
+                poison_item.item_id: PendingCandidate(
+                    item=poison_item,
+                    analysis=anchored_analysis,
+                    score=10,
+                    disposition="HIGH_SIGNAL",
+                    buffered_at="2026-11-21T12:00:00+00:00",
+                    iso_week="2026-W47",
+                )
+            },
+        ),
+    )
+
+    captured_stage3: dict[str, object] = {}
+
+    class _PoisonAuditStubLLM:
+        def triage_stage1_batch(self, items, repo_inventory):
+            raise AssertionError("Stage 1 should not run when draining empty daily feed.")
+
+        def analyze_stage2_survivor(self, item, target_repo_context):
+            raise AssertionError("Stage 2 should not run when draining empty daily feed.")
+
+        def evaluate_stage3_coherence(
+            self,
+            candidates: list[DeAnchoredCandidate],
+            full_repo_baseline: str,
+        ) -> tuple[Stage3CoherenceVerdict, LLMCallTrace]:
+            captured_stage3["candidates"] = candidates
+            captured_stage3["baseline"] = full_repo_baseline
+            captured_stage3["payload"] = _format_stage3_user_payload(candidates, nonce="deadbeef")
+            verdict = Stage3CoherenceVerdict(
+                decision="REJECT_ALL",
+                executive_summary="Rejected Prompt-Wish Poison candidate; use deterministic hooks instead.",
+                item_audits=[
+                    Stage3ItemAudit(
+                        item_id=poison_item.item_id,
+                        verdict="REJECT_ENTROPY",
+                        affected_repo_files=["templates/AGENTS.md.template"],
+                        poisons=SystemicPoisonFlags(
+                            prompt_wish_poison=True,
+                            attention_budget_poison=True,
+                        ),
+                        rationale="Asks model to remember SQL safety in 60 lines of prose instead of Write It Twice lint/hook enforcement.",
+                    )
+                ],
+                syntheses=[],
+            )
+            trace = LLMCallTrace(
+                stage="stage3",
+                requested_model="gemini-4-neon",
+                resolved_model_version="gemini-4-neon-2026-11",
+                thinking_level="HIGH",
+                api_version="v1beta",
+                prompt_tokens=15000,
+                output_tokens=400,
+                thought_tokens=1200,
+                estimated_cost_usd=0.069,
+                item_ids=[c.item_id for c in candidates],
+            )
+            return verdict, trace
+
+    sun_res = run_pipeline(
+        config,
+        seen=SeenState(),
+        pending=load_pending_candidates(pending_path),
+        mode="enforce",
+        run_coherence_gate=True,
+        offline_candidates=[],
+        llm_client=_PoisonAuditStubLLM(),
+        now=datetime(2026, 11, 22, 13, 0, tzinfo=UTC),
+    )
+
+    # 1. Prove Stage 3 received de-anchored inputs (no 7/10, 8/10, 10/10, or HIGH_SIGNAL) and full repo context
+    stage3_payload = str(captured_stage3["payload"])
+    for forbidden_anchor in ("7/10", "8/10", "10/10", "HIGH_SIGNAL", "HIGH SIGNAL"):
+        assert forbidden_anchor not in stage3_payload, f"Anchoring leak found: {forbidden_anchor}"
+    baseline_seen = str(captured_stage3["baseline"])
+    assert "playbooks/harness-loop-graph.md" in baseline_seen
+    assert "skills/ste-clarity/SKILL.md" in baseline_seen
+    assert "templates/AGENTS.md.template" in baseline_seen
+    assert "docs/GLOSSARY.md" in baseline_seen
+    assert "docs/adr/0001-coherence-gate-and-fast-lane.md" in baseline_seen
+
+    # 2. Prove Stage 3 rejected Prompt-Wish Poison with 0 PRs and logged to weekly-audits.md
+    assert sun_res.stage3_verdict is not None
+    assert sun_res.stage3_verdict.decision == "REJECT_ALL"
+    assert sun_res.staged_items == []
+    assert "REJECT_ALL" in sun_res.summary_markdown
+    assert "prompt_wish_poison" in sun_res.summary_markdown
+    assert "REJECT_ENTROPY" in sun_res.summary_markdown
+
+    run_result_path = tmp_path / "poison-run-result.json"
+    run_result_path.write_text(sun_res.model_dump_json(indent=2), encoding="utf-8")
+    outcome = apply_run_result_files(
+        run_result_path=run_result_path,
+        seen_path=seen_path,
+        health_path=health_path,
+        pending_path=pending_path,
+        audits_path=audits_path,
+        digest_dir=digest_dir,
+    )
+    assert outcome["stage3_decision"] == "REJECT_ALL"
+    assert outcome["staged_count"] == 0
+    assert outcome["added_to_digest"] == 0
+    assert outcome["digest_path"] == ""
+    assert outcome["audit_logged"] is True
+    assert not digest_dir.exists()
+    assert load_pending_candidates(pending_path).items == {}
+
+    audit_md = load_weekly_audits(audits_path)
+    assert "# Weekly Coherence Gate Audit Log" in audit_md
+    assert poison_item.item_id in audit_md
+    assert "REJECT_ALL" in audit_md
+    assert "REJECT_ENTROPY" in audit_md
+    assert "prompt_wish_poison" in audit_md
+
+    # 3. Deterministic Python guardrail: even if an LLM erroneously returns APPROVE_SYNTHESIS
+    # while prompt_wish_poison=True, enforce_stage3_coherence_guardrails forces REJECT_ALL.
+    rogue_verdict = Stage3CoherenceVerdict(
+        decision="APPROVE_SYNTHESIS",
+        executive_summary="Rogue approval despite poison.",
+        item_audits=[
+            Stage3ItemAudit(
+                item_id=poison_item.item_id,
+                verdict="APPROVE_SYNTHESIS",
+                poisons=SystemicPoisonFlags(prompt_wish_poison=True),
+                rationale="Triggers prompt_wish_poison.",
+            )
+        ],
+        syntheses=[
+            Stage3SynthesisProposal(
+                title="Should Be Blocked",
+                source_item_ids=[poison_item.item_id],
+                target_repo_files=["templates/AGENTS.md.template"],
+                unified_thesis="Blocked by Python Harness Wall.",
+                proposed_repo_changes="None.",
+            )
+        ],
+    )
+    enforced = enforce_stage3_coherence_guardrails(rogue_verdict, {poison_item.item_id})
+    assert enforced.decision == "REJECT_ALL"
+    assert enforced.syntheses == []
+    assert enforced.item_audits[0].verdict == "REJECT_ENTROPY"
+
+
+def test_stage3_merges_compounding_items_into_one_unified_synthesis_pr(tmp_path: Path) -> None:
+    from scripts.radar.models import PendingCandidate, PendingCandidatesState
+    from scripts.radar.state import load_pending_candidates, save_pending_candidates
+    from scripts.ste_lint import lint_file
+
+    fixture = json.loads(FIXTURE_PATH.read_text(encoding="utf-8"))
+    comp_items = [
+        CandidateItem.model_validate(raw)
+        for raw in fixture["stage3_coherence_cases"]["compounding_items"]
+    ]
+    item1, item2 = comp_items[0], comp_items[1]
+    config = PipelineConfig(repo_root=REPO_ROOT, feeds_path=REPO_ROOT / "radar" / "feeds.yaml")
+
+    pending_path = tmp_path / "state" / "pending-candidates.json"
+    seen_path = tmp_path / "state" / "seen.json"
+    health_path = tmp_path / "state" / "feed-health.json"
+    audits_path = tmp_path / "state" / "weekly-audits.md"
+    digest_dir = tmp_path / "radar"
+
+    def _make_pending(item: CandidateItem, score: int) -> PendingCandidate:
+        dims = RubricDimensions(
+            delta_novelty=2,
+            durability=2,
+            actionability=2 if score >= 8 else 1,
+            evidence_quality=1,
+            career_leverage=1,
+        )
+        return PendingCandidate(
+            item=item,
+            analysis=Stage2Analysis(
+                item_id=item.item_id,
+                passes_net_new_delta_gate=True,
+                passes_substance_gate=True,
+                counterargument_to_drop=f"Scored {score}/10 locally.",
+                dimensions=dims,
+                target_repo_files=["playbooks/programmatic-tooling-mcp.md"],
+                what_is_net_new=f"Net-new deterministic pattern ({score}/10) for {item.title}.",
+                proposed_refinement="Add deterministic wrapper and AST guard pattern.",
+                career_takeaway="Improves production FDE tool governance.",
+            ),
+            score=score,
+            disposition="STAGE",
+            buffered_at="2026-11-21T10:00:00+00:00",
+            iso_week="2026-W47",
+        )
+
+    save_pending_candidates(
+        pending_path,
+        PendingCandidatesState(
+            updated_at="2026-11-21T10:00:00+00:00",
+            items={
+                item1.item_id: _make_pending(item1, 7),
+                item2.item_id: _make_pending(item2, 8),
+            },
+        ),
+    )
+
+    seen_payloads: list[str] = []
+
+    class _CompoundingStubLLM:
+        def triage_stage1_batch(self, items, repo_inventory):
+            raise AssertionError("Stage 1 should not run on empty daily feed.")
+
+        def analyze_stage2_survivor(self, item, target_repo_context):
+            raise AssertionError("Stage 2 should not run on empty daily feed.")
+
+        def evaluate_stage3_coherence(
+            self,
+            candidates: list[DeAnchoredCandidate],
+            full_repo_baseline: str,
+        ) -> tuple[Stage3CoherenceVerdict, LLMCallTrace]:
+            seen_payloads.append(_format_stage3_user_payload(candidates, nonce="cafebabe"))
+            verdict = Stage3CoherenceVerdict(
+                decision="APPROVE_SYNTHESIS",
+                executive_summary="Both items compound into one deterministic MCP boundary synthesis with zero poisons.",
+                item_audits=[
+                    Stage3ItemAudit(
+                        item_id=item1.item_id,
+                        verdict="COMPOUNDS_WITH",
+                        related_item_ids=[item2.item_id],
+                        affected_repo_files=["playbooks/programmatic-tooling-mcp.md"],
+                        poisons=SystemicPoisonFlags(),
+                        rationale="Bounded JSON envelopes cut tool output noise and pair with AST hook validation.",
+                    ),
+                    Stage3ItemAudit(
+                        item_id=item2.item_id,
+                        verdict="COMPOUNDS_WITH",
+                        related_item_ids=[item1.item_id],
+                        affected_repo_files=["playbooks/programmatic-tooling-mcp.md"],
+                        poisons=SystemicPoisonFlags(),
+                        rationale="AST PreToolUse inspection enforces egress policy on the same wrapper boundary.",
+                    ),
+                ],
+                syntheses=[
+                    Stage3SynthesisProposal(
+                        title="Deterministic MCP Output Envelopes and AST PreToolUse Policy",
+                        source_item_ids=[item1.item_id, item2.item_id],
+                        target_repo_files=["playbooks/programmatic-tooling-mcp.md"],
+                        unified_thesis="Pair bounded JSON tool envelopes with AST PreToolUse checks to protect Smart Zone budgets and egress boundaries.",
+                        proposed_repo_changes="Add one compact section specifying JSON error envelopes and AST script validation.",
+                        harmonization_and_pruning="Replace ad-hoc regex hook tips with the deterministic AST policy rule.",
+                        career_takeaway="Gives Staff SWEs and FDEs reusable MCP governance without extra agents.",
+                    )
+                ],
+            )
+            trace = LLMCallTrace(
+                stage="stage3",
+                requested_model="gemini-4-neon",
+                resolved_model_version="gemini-4-neon-2026-11",
+                thinking_level="HIGH",
+                api_version="v1beta",
+                estimated_cost_usd=0.07,
+                item_ids=[c.item_id for c in candidates],
+            )
+            return verdict, trace
+
+    sun_res = run_pipeline(
+        config,
+        seen=SeenState(),
+        pending=load_pending_candidates(pending_path),
+        mode="enforce",
+        run_coherence_gate=True,
+        offline_candidates=[],
+        llm_client=_CompoundingStubLLM(),
+        now=datetime(2026, 11, 22, 13, 0, tzinfo=UTC),
+    )
+
+    assert len(seen_payloads) == 1
+    for anchor in ("7/10", "8/10", "10/10", "HIGH_SIGNAL"):
+        assert anchor not in seen_payloads[0]
+
+    assert sun_res.stage3_verdict is not None
+    assert sun_res.stage3_verdict.decision == "APPROVE_SYNTHESIS"
+    assert "COMPOUNDS_WITH" in sun_res.summary_markdown
+    assert "APPROVE_SYNTHESIS" in sun_res.summary_markdown
+
+    run_result_path = tmp_path / "compound-run-result.json"
+    run_result_path.write_text(sun_res.model_dump_json(indent=2), encoding="utf-8")
+    outcome = apply_run_result_files(
+        run_result_path=run_result_path,
+        seen_path=seen_path,
+        health_path=health_path,
+        pending_path=pending_path,
+        audits_path=audits_path,
+        digest_dir=digest_dir,
+    )
+    assert outcome["stage3_decision"] == "APPROVE_SYNTHESIS"
+    assert outcome["staged_count"] == 2
+    assert outcome["added_to_digest"] == 2
+    assert outcome["audit_logged"] is True
+    assert outcome["pending_count"] == 0
+
+    digest_file = Path(str(outcome["digest_path"]))
+    assert digest_file.is_file()
+    digest_text = digest_file.read_text(encoding="utf-8")
+    # Merged into ONE unified synthesis section containing BOTH source markers
+    assert digest_text.count("### [COHERENCE GATE · SYNTHESIS]") == 1
+    markers = parse_radar_markers(digest_text)
+    assert [m[0] for m in markers] == [item1.item_id, item2.item_id]
+
+    # Verify rendered synthesis digest passes STE-80 descriptive lint
+    ste_stats, ste_violations = lint_file(digest_file, strict_20=False)
+    assert ste_stats.errors == 0, f"STE-80 errors in unified synthesis digest: {ste_violations}"
+
+    # Re-applying the same run-result.json must be idempotent
+    repeat = apply_run_result_files(
+        run_result_path=run_result_path,
+        seen_path=seen_path,
+        health_path=health_path,
+        pending_path=pending_path,
+        audits_path=audits_path,
+        digest_dir=digest_dir,
+    )
+    assert repeat["added_to_digest"] == 0
+    assert repeat["audit_logged"] is False
+
+
+def test_fast_lane_verified_url_bypasses_stage1_directly_into_stage3(tmp_path: Path) -> None:
+    from scripts.radar.models import PendingCandidate, PendingCandidatesState
+    from scripts.radar.state import load_pending_candidates, save_pending_candidates
+
+    config = PipelineConfig(repo_root=REPO_ROOT, feeds_path=REPO_ROOT / "radar" / "feeds.yaml")
+    seen_path = tmp_path / "state" / "seen.json"
+    health_path = tmp_path / "state" / "feed-health.json"
+    pending_path = tmp_path / "state" / "pending-candidates.json"
+    audits_path = tmp_path / "state" / "weekly-audits.md"
+    digest_dir = tmp_path / "radar"
+
+    # Pre-populate pending-candidates.json to verify fast-lane does NOT wipe weekly buffer
+    existing_item = CandidateItem(
+        item_id="d11111111111",
+        feed_id="hn-agentic",
+        feed_name="Hacker News",
+        title="Buffered Midweek Item",
+        url="https://example.dev/midweek",
+        canonical_url="https://example.dev/midweek",
+        domain="example.dev",
+    )
+    save_pending_candidates(
+        pending_path,
+        PendingCandidatesState(
+            updated_at="2026-11-19T13:00:00+00:00",
+            items={
+                existing_item.item_id: PendingCandidate(
+                    item=existing_item,
+                    analysis=Stage2Analysis(
+                        item_id=existing_item.item_id,
+                        passes_net_new_delta_gate=True,
+                        passes_substance_gate=True,
+                        counterargument_to_drop="Minor overlap.",
+                        dimensions=RubricDimensions(
+                            delta_novelty=2,
+                            durability=2,
+                            actionability=1,
+                            evidence_quality=1,
+                            career_leverage=1,
+                        ),
+                        target_repo_files=["playbooks/harness-loop-graph.md"],
+                        what_is_net_new="Buffered delta.",
+                        proposed_refinement="Keep buffered.",
+                        career_takeaway="Useful.",
+                    ),
+                    score=7,
+                    disposition="STAGE",
+                    buffered_at="2026-11-19T13:00:00+00:00",
+                    iso_week="2026-W47",
+                )
+            },
+        ),
+    )
+
+    article_body = " ".join(
+        [
+            "Deterministic replay harnesses with AST tool-call sandboxes and bounded error envelopes "
+            "eliminate silent drift across autonomous pull-request verification loops."
+        ]
+        * 14
+    )
+    article_html = (
+        f"<html><head><title>Deterministic AST Tool Sandboxes</title></head>"
+        f"<body><article><p>{article_body}</p></article></body></html>"
+    ).encode()
+    fast_url = "https://eng.example.dev/ast-tool-sandboxes"
+
+    stage3_calls: list[list[DeAnchoredCandidate]] = []
+
+    class _DirectStage3OnlyStubLLM:
+        def __init__(self, *, approve: bool) -> None:
+            self.approve = approve
+
+        def triage_stage1_batch(self, items, repo_inventory):
+            raise AssertionError("Verified fast_lane_url MUST bypass Stage 1!")
+
+        def analyze_stage2_survivor(self, item, target_repo_context):
+            raise AssertionError("Verified fast_lane_url MUST bypass Stage 2!")
+
+        def evaluate_stage3_coherence(
+            self,
+            candidates: list[DeAnchoredCandidate],
+            full_repo_baseline: str,
+        ) -> tuple[Stage3CoherenceVerdict, LLMCallTrace]:
+            stage3_calls.append(candidates)
+            assert "docs/GLOSSARY.md" in full_repo_baseline
+            cid = candidates[0].item_id
+            if self.approve:
+                verdict = Stage3CoherenceVerdict(
+                    decision="APPROVE_SYNTHESIS",
+                    executive_summary="Approved direct fast-lane AST sandbox pattern.",
+                    item_audits=[
+                        Stage3ItemAudit(
+                            item_id=cid,
+                            verdict="APPROVE_SYNTHESIS",
+                            affected_repo_files=["playbooks/programmatic-tooling-mcp.md"],
+                            poisons=SystemicPoisonFlags(),
+                            rationale="Concrete AST sandbox pattern with zero systemic poisons.",
+                        )
+                    ],
+                    syntheses=[
+                        Stage3SynthesisProposal(
+                            title="Deterministic AST Tool Sandboxes",
+                            source_item_ids=[cid],
+                            target_repo_files=["playbooks/programmatic-tooling-mcp.md"],
+                            unified_thesis="Adds AST policy checks before running generated tool scripts.",
+                            proposed_repo_changes="Document AST pre-execution checks for Code Mode hooks.",
+                            harmonization_and_pruning="Prune weaker regex hook guidance.",
+                            career_takeaway="Protects enterprise FDE environments.",
+                        )
+                    ],
+                )
+            else:
+                verdict = Stage3CoherenceVerdict(
+                    decision="REJECT_ALL",
+                    executive_summary="Rejected fast-lane candidate due to orchestration tax.",
+                    item_audits=[
+                        Stage3ItemAudit(
+                            item_id=cid,
+                            verdict="REJECT_ENTROPY",
+                            poisons=SystemicPoisonFlags(orchestration_tax_poison=True),
+                            rationale="Adds extra orchestration layers where one script suffices.",
+                        )
+                    ],
+                    syntheses=[],
+                )
+            trace = LLMCallTrace(
+                stage="stage3",
+                requested_model="gemini-4-neon",
+                resolved_model_version="gemini-4-neon-2026-11",
+                thinking_level="HIGH",
+                api_version="v1beta",
+                estimated_cost_usd=0.05,
+                item_ids=[cid],
+            )
+            return verdict, trace
+
+    # 1. Fast-lane REJECT_ALL in enforce mode: bypasses Stage 1/2, logs to weekly-audits.md, opens 0 PRs, keeps pending buffer intact
+    rej_res = run_pipeline(
+        config,
+        seen=SeenState(),
+        pending=load_pending_candidates(pending_path),
+        mode="enforce",
+        fast_lane_url=fast_url,
+        llm_client=_DirectStage3OnlyStubLLM(approve=False),
+        http_get=lambda u: (u, article_html),
+        now=datetime(2026, 11, 21, 16, 0, tzinfo=UTC),
+    )
+    assert len(stage3_calls) == 1
+    assert stage3_calls[0][0].source_path == "fast_lane_direct"
+    assert rej_res.stage1_reviewed == 0
+    assert rej_res.stage2_results == []
+    assert rej_res.stage3_verdict is not None
+    assert rej_res.stage3_verdict.decision == "REJECT_ALL"
+    assert "orchestration_tax_poison" in rej_res.summary_markdown
+
+    rej_path = tmp_path / "fl-rej.json"
+    rej_path.write_text(rej_res.model_dump_json(indent=2), encoding="utf-8")
+    rej_out = apply_run_result_files(
+        run_result_path=rej_path,
+        seen_path=seen_path,
+        health_path=health_path,
+        pending_path=pending_path,
+        audits_path=audits_path,
+        digest_dir=digest_dir,
+    )
+    assert rej_out["stage3_decision"] == "REJECT_ALL"
+    assert rej_out["staged_count"] == 0
+    assert rej_out["added_to_digest"] == 0
+    assert rej_out["audit_logged"] is True
+    assert not digest_dir.exists()
+    assert set(load_pending_candidates(pending_path).items.keys()) == {"d11111111111"}
+    assert "orchestration_tax_poison" in load_weekly_audits(audits_path)
+
+    # 2. Fast-lane APPROVE_SYNTHESIS with force=True in enforce mode: opens unified synthesis digest directly
+    app_res = run_pipeline(
+        config,
+        seen=load_seen_state(seen_path),
+        pending=load_pending_candidates(pending_path),
+        mode="enforce",
+        fast_lane_url=fast_url,
+        force=True,
+        llm_client=_DirectStage3OnlyStubLLM(approve=True),
+        http_get=lambda u: (u, article_html),
+        now=datetime(2026, 11, 21, 17, 0, tzinfo=UTC),
+    )
+    assert len(stage3_calls) == 2
+    assert app_res.stage1_reviewed == 0
+    assert app_res.stage2_results == []
+    assert app_res.stage3_verdict is not None
+    assert app_res.stage3_verdict.decision == "APPROVE_SYNTHESIS"
+
+    app_path = tmp_path / "fl-app.json"
+    app_path.write_text(app_res.model_dump_json(indent=2), encoding="utf-8")
+    app_out = apply_run_result_files(
+        run_result_path=app_path,
+        seen_path=seen_path,
+        health_path=health_path,
+        pending_path=pending_path,
+        audits_path=audits_path,
+        digest_dir=digest_dir,
+    )
+    assert app_out["stage3_decision"] == "APPROVE_SYNTHESIS"
+    assert app_out["staged_count"] == 1
+    assert app_out["added_to_digest"] == 1
+    assert app_out["audit_logged"] is True
+    assert set(load_pending_candidates(pending_path).items.keys()) == {"d11111111111"}
+
+    fl_digest = Path(str(app_out["digest_path"]))
+    assert fl_digest.is_file()
+    fl_markers = parse_radar_markers(fl_digest.read_text(encoding="utf-8"))
+    assert len(fl_markers) == 1
+    assert fl_markers[0][1] == "fast-lane"
+    assert fl_markers[0][2] == "eng.example.dev"

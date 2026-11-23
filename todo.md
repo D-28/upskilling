@@ -69,7 +69,7 @@ Goal: catch leading-edge agentic engineering shifts within ~24h without X-scroll
 Spec & vertical tickets: [`docs/specs/coherence-gate-and-fast-lane.md`](docs/specs/coherence-gate-and-fast-lane.md) · [`docs/adr/0001-coherence-gate-and-fast-lane.md`](docs/adr/0001-coherence-gate-and-fast-lane.md) · [`docs/GLOSSARY.md`](docs/GLOSSARY.md).
 - [x] **Ticket 1:** Fast-Lane Plan B resolution, `FETCH_INCOMPLETE` fail-closed gate, `force` / non-burning `observe` fast-lane, and rich GitHub Actions Job Summary tables.
 - [x] **Ticket 2:** Mon–Sat holding buffer (`radar-state/pending-candidates.json`) decoupling daily sweeps from Sunday weekly gate runs.
-- [ ] **Ticket 3:** Stage 3 `gemini-4-neon` (`HIGH`) full-repo Coherence Gate (score-blind de-anchoring, 6 Systemic Poison checks, zero-PR default + `weekly-audits.md`, fast-lane Stage 1 bypass).
+- [x] **Ticket 3:** Stage 3 `gemini-4-neon` (`HIGH`) full-repo Coherence Gate (score-blind de-anchoring, 6 Systemic Poison checks, zero-PR default + `weekly-audits.md`, fast-lane Stage 1 bypass).
 - [ ] **Future consideration (if needed):** If Plan B repeatedly fails (`FETCH_INCOMPLETE`) on paywalled or X-Article links, add an Antigravity local browser/CLI fallback (`$0` marginal API spend using Google AI Pro/Ultra sub) that evaluates logged-in page text locally against the Coherence Gate.
 
 ---

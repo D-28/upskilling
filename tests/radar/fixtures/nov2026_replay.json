@@ -162,5 +162,45 @@
       "expected_when_withholding": {},
       "ground_truth_ref": "DECOY_PATCH_NOISE"
     }
-  ]
+  ],
+  "stage3_coherence_cases": {
+    "prompt_wish_poison": {
+      "item_id": "a00000000001",
+      "feed_id": "hn-agentic",
+      "feed_name": "Hacker News",
+      "title": "Add 60 Lines of Reminder Prose to AGENTS.md So Agents Never Drop Tables",
+      "url": "https://blog.example.dev/agents-md-reminders",
+      "canonical_url": "https://blog.example.dev/agents-md-reminders",
+      "domain": "blog.example.dev",
+      "published_at": "2026-11-21T10:00:00+00:00",
+      "excerpt": "Tell your coding agent in AGENTS.md to always remember to double-check SQL migrations and never run destructive queries.",
+      "body": "We fixed production SQL incidents by appending 60 lines of bold reminder rules to AGENTS.md telling the model to always remember to inspect table locks, verify backup timestamps, and never run DROP TABLE without asking twice. No hooks or CI scripts are required if your prompt wording is emphatic enough."
+    },
+    "compounding_items": [
+      {
+        "item_id": "c00000000001",
+        "feed_id": "anthropic-engineering",
+        "feed_name": "Anthropic Engineering Blog",
+        "title": "Deterministic JSON Schema Envelopes for MCP Tool Wrappers",
+        "url": "https://eng.example.dev/mcp-json-envelopes",
+        "canonical_url": "https://eng.example.dev/mcp-json-envelopes",
+        "domain": "eng.example.dev",
+        "published_at": "2026-11-18T14:00:00+00:00",
+        "excerpt": "Wrap raw MCP CLI outputs in bounded Pydantic JSON envelopes so agents stay inside the Smart Zone without dropping failure fields.",
+        "body": "Production teams cut MCP context usage by 68% by routing raw CLI and MCP responses through thin deterministic Python wrappers that emit bounded JSON envelopes containing status, error_code, and top-5 structured findings. Every wrapper ships with a contract test and exits non-zero on schema drift."
+      },
+      {
+        "item_id": "c00000000002",
+        "feed_id": "simon-willison",
+        "feed_name": "Simon Willison Weblog & Linklog",
+        "title": "AST-Based PreToolUse Policy Inspection for Scripted Tool Runs",
+        "url": "https://simonwillison.net/2026/Nov/21/pretooluse-ast-policy/",
+        "canonical_url": "https://simonwillison.net/2026/Nov/21/pretooluse-ast-policy/",
+        "domain": "simonwillison.net",
+        "published_at": "2026-11-21T16:00:00+00:00",
+        "excerpt": "Parse tool_input.code with an AST walker in PreToolUse hooks instead of brittle regex checks on shell strings.",
+        "body": "Regex guards on PreToolUse fail as soon as agents invoke scripts or Code Mode blocks. Parsing tool_input.code with a tiny deterministic AST walker blocks forbidden egress, secret reads, and destructive filesystem calls in under 15ms and emits structured violation codes for loop retries."
+      }
+    ]
+  }
 }

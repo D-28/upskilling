@@ -74,9 +74,11 @@ class CandidateSummary(BaseModel):
 
     item_id: str = Field(pattern=ITEM_ID_PATTERN)
     feed_id: str
+    feed_name: str = ""
     title: str
     url: str = ""
     canonical_url: str
+    domain: str = ""
     body_chars: int = 0
     word_count: int = 0
     enrichment_status: str = "not_needed"
@@ -180,10 +182,123 @@ class PendingCandidatesState(BaseModel):
     items: dict[str, PendingCandidate] = Field(default_factory=dict)  # keyed by item_id
 
 
+Stage3ItemVerdictCode = Literal[
+    "SUBSUMED_BY",
+    "CONFLICTS_WITH",
+    "COMPOUNDS_WITH",
+    "REJECT_ENTROPY",
+    "APPROVE_SYNTHESIS",
+]
+
+Stage3RunDecision = Literal["REJECT_ALL", "APPROVE_SYNTHESIS"]
+
+
+class SystemicPoisonFlags(BaseModel):
+    """Six Systemic Poison failure modes audited by Stage 3 Coherence Gate."""
+
+    attention_budget_poison: bool = Field(
+        default=False,
+        description="True if purely additive prose bloats context without replacing or sharpening an invariant.",
+    )
+    prompt_wish_poison: bool = Field(
+        default=False,
+        description="True if the proposal asks models to remember a rule instead of enforcing it via lint, script, or hook.",
+    )
+    verification_weakening_poison: bool = Field(
+        default=False,
+        description="True if it promotes same-context self-grading, LLM confidence thresholds, or weaker base-branch REVIEW.md walls.",
+    )
+    orchestration_tax_poison: bool = Field(
+        default=False,
+        description="True if it adds multi-agent graph complexity where one loop or deterministic script suffices.",
+    )
+    cache_smart_zone_poison: bool = Field(
+        default=False,
+        description="True if mid-session effort toggles or raw tool dumps break prompt-cache reuse or Smart Zone discipline.",
+    )
+    cross_file_disharmony: bool = Field(
+        default=False,
+        description="True if it contradicts existing playbooks, duplicates another item, or leaves skill/template updates unpropagated.",
+    )
+
+    def active_poisons(self) -> list[str]:
+        names = (
+            "attention_budget_poison",
+            "prompt_wish_poison",
+            "verification_weakening_poison",
+            "orchestration_tax_poison",
+            "cache_smart_zone_poison",
+            "cross_file_disharmony",
+        )
+        return [name for name in names if getattr(self, name)]
+
+    def has_any(self) -> bool:
+        return bool(self.active_poisons())
+
+
+class Stage3ItemAudit(BaseModel):
+    """Per-candidate verdict and Systemic Poison audit emitted by Stage 3."""
+
+    item_id: str = Field(pattern=ITEM_ID_PATTERN)
+    verdict: Stage3ItemVerdictCode
+    related_item_ids: list[str] = Field(
+        default_factory=list,
+        description="Other candidate item_ids this candidate is subsumed by, conflicts with, or compounds with.",
+    )
+    affected_repo_files: list[str] = Field(default_factory=list, max_length=6)
+    poisons: SystemicPoisonFlags = Field(default_factory=SystemicPoisonFlags)
+    rationale: str = Field(max_length=500)
+
+
+class Stage3SynthesisProposal(BaseModel):
+    """Unified synthesis proposal when Stage 3 approves standalone or compounding candidates."""
+
+    title: str = Field(max_length=180)
+    source_item_ids: list[str] = Field(default_factory=list)
+    target_repo_files: list[str] = Field(default_factory=list, max_length=6)
+    unified_thesis: str = Field(max_length=1000)
+    proposed_repo_changes: str = Field(max_length=1200)
+    harmonization_and_pruning: str = Field(
+        default="",
+        max_length=600,
+        description="Existing prose to tighten, replace, or update across playbooks, skills, or templates to keep attention budget flat.",
+    )
+    career_takeaway: str = Field(default="", max_length=400)
+
+
+class Stage3CoherenceVerdict(BaseModel):
+    """Strict JSON Schema returned by zero-tool Stage 3 Coherence Gate (gemini-4-neon, HIGH)."""
+
+    decision: Stage3RunDecision = "REJECT_ALL"
+    executive_summary: str = Field(max_length=800)
+    item_audits: list[Stage3ItemAudit] = Field(default_factory=list)
+    syntheses: list[Stage3SynthesisProposal] = Field(default_factory=list)
+
+
+class DeAnchoredCandidate(BaseModel):
+    """Score-blind Stage 3 input payload with Stage 2 numeric scores and badges stripped."""
+
+    item_id: str = Field(pattern=ITEM_ID_PATTERN)
+    feed_id: str
+    feed_name: str
+    title: str
+    canonical_url: str
+    domain: str
+    published_at: str | None = None
+    body: str = ""
+    source_path: Literal["pending_buffer", "stage2_survivor", "fast_lane_direct"] = "stage2_survivor"
+    target_repo_files: list[str] = Field(default_factory=list)
+    what_is_net_new: str = ""
+    proposed_refinement: str = ""
+    career_takeaway: str = ""
+    counterargument_to_drop: str = ""
+    evidence_quote: str = ""
+
+
 class LLMCallTrace(BaseModel):
     """Trace telemetry for a single zero-tool Gemini API call."""
 
-    stage: Literal["stage1", "stage2"]
+    stage: Literal["stage1", "stage2", "stage3"]
     requested_model: str
     resolved_model_version: str = ""
     thinking_level: str
@@ -288,6 +403,7 @@ class RunResult(BaseModel):
     stage2_results: list[ScoredSurvivor] = Field(default_factory=list)
     buffered_items: list[ScoredSurvivor] = Field(default_factory=list)
     drained_item_ids: list[str] = Field(default_factory=list)
+    stage3_verdict: Stage3CoherenceVerdict | None = None
     staged_items: list[ScoredSurvivor] = Field(default_factory=list)
     has_high_signal: bool = False
     new_seen_records: dict[str, SeenRecord] = Field(default_factory=dict)
