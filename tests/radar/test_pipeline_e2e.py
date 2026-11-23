@@ -236,15 +236,16 @@ def test_replay_calibration_fixture_and_job2_staging_e2e(tmp_path: Path) -> None
     assert full_res.stage1_reviewed == len(candidates)
     assert full_res.staged_items == []
 
-    # 4. Withholding verification-engineering.md recovers B as 10/10 HIGH_SIGNAL while dropping decoys
+    # 4. Withholding verification-engineering.md on the Sunday gate recovers B as 10/10 HIGH_SIGNAL while dropping decoys
     recall_res = run_pipeline(
         config,
         seen=SeenState(),
         mode="enforce",
+        run_coherence_gate=True,
         offline_candidates=candidates,
         exclude_repo_files=["playbooks/verification-engineering.md"],
         llm_client=stub,
-        now=datetime(2026, 11, 20, 12, 0, tzinfo=UTC),
+        now=datetime(2026, 11, 22, 12, 0, tzinfo=UTC),
     )
     assert len(recall_res.staged_items) == 1
     assert recall_res.staged_items[0].item.item_id == "b22222222222"
@@ -614,3 +615,239 @@ def test_fast_lane_login_wall_exits_nonzero_as_fetch_incomplete_with_zero_llm_an
     assert "force=true" in forced_res.summary_markdown
 
 
+def test_mon_sat_daily_holding_buffer_and_sunday_coherence_gate_drain(tmp_path: Path) -> None:
+    from scripts.radar.cli import main
+    from scripts.radar.state import load_pending_candidates
+
+    config = PipelineConfig(repo_root=REPO_ROOT, feeds_path=REPO_ROOT / "radar" / "feeds.yaml")
+    seen_path = tmp_path / "state" / "seen.json"
+    health_path = tmp_path / "state" / "feed-health.json"
+    pending_path = tmp_path / "state" / "pending-candidates.json"
+    digest_dir = tmp_path / "radar"
+
+    # Backward-compatible empty default when pending-candidates.json does not exist yet
+    initial_pending = load_pending_candidates(pending_path)
+    assert initial_pending.schema_version == 1
+    assert initial_pending.items == {}
+
+    cand_tue = CandidateItem(
+        item_id="b22222222222",
+        feed_id="addy-osmani-elevate",
+        feed_name="Addy Osmani",
+        title="Base-Branch REVIEW.md and Property Testing Gates",
+        url="https://addyo.substack.com/p/verification-gates",
+        canonical_url="https://addyo.substack.com/p/verification-gates",
+        domain="addyo.substack.com",
+        body="Verification engineering with base-branch REVIEW.md and property testing.",
+    )
+    cand_low_score = CandidateItem(
+        item_id="a66666666666",
+        feed_id="hn-agentic",
+        feed_name="Hacker News",
+        title="Minor CLI Flag Adjustment scoring 6/10",
+        url="https://example.dev/minor-flag",
+        canonical_url="https://example.dev/minor-flag",
+        domain="example.dev",
+        body="Minor CLI flag adjustment that scores 6/10 (below the 7/10 pending buffer floor).",
+    )
+    cand_fri = CandidateItem(
+        item_id="c33333333333",
+        feed_id="simon-willison",
+        feed_name="Simon Willison",
+        title="Three-Layer Harness Loop and Undo-Price Gating",
+        url="https://simonwillison.net/2026/Nov/19/harness-loops/",
+        canonical_url="https://simonwillison.net/2026/Nov/19/harness-loops/",
+        domain="simonwillison.net",
+        body="Three-layer harness loop architecture with deterministic undo-price gating.",
+    )
+
+    class _CadenceStubLLM(_InventoryAwareStubLLM):
+        def triage_stage1_batch(self, items, repo_inventory):
+            verdicts = [
+                Stage1ItemVerdict(
+                    item_id=i.item_id,
+                    verdict="SURVIVOR",
+                    matched_repo_file="playbooks/verification-engineering.md",
+                    reason="Candidate passes Stage 1 triage for Stage 2 scoring.",
+                )
+                for i in items
+            ]
+            trace = LLMCallTrace(
+                stage="stage1",
+                requested_model="gemini-flash-lite-latest",
+                resolved_model_version="stub-flash-lite",
+                thinking_level="LOW",
+                api_version="v1beta",
+                estimated_cost_usd=0.0005,
+                item_ids=[i.item_id for i in items],
+            )
+            return Stage1BatchResponse(verdicts=verdicts), trace
+
+        def analyze_stage2_survivor(self, item, target_repo_context):
+            if item.item_id == "a66666666666":
+                dims = RubricDimensions(
+                    delta_novelty=1,
+                    durability=1,
+                    actionability=2,
+                    evidence_quality=1,
+                    career_leverage=1,
+                )  # 6/10 (< 7/10 threshold -> must NOT enter pending-candidates.json)
+            elif item.item_id == "c33333333333":
+                dims = RubricDimensions(
+                    delta_novelty=2,
+                    durability=2,
+                    actionability=1,
+                    evidence_quality=2,
+                    career_leverage=1,
+                )  # 8/10 (>= 7/10 -> buffered)
+            else:
+                dims = RubricDimensions(
+                    delta_novelty=2,
+                    durability=2,
+                    actionability=2,
+                    evidence_quality=2,
+                    career_leverage=2,
+                )  # 10/10 (>= 7/10 -> buffered)
+            analysis = Stage2Analysis(
+                item_id=item.item_id,
+                passes_net_new_delta_gate=True,
+                passes_substance_gate=True,
+                counterargument_to_drop="Could overlap slightly with existing notes.",
+                dimensions=dims,
+                target_repo_files=["playbooks/verification-engineering.md"],
+                what_is_net_new=f"Net-new delta for {item.item_id}.",
+                proposed_refinement=f"Refinement for {item.item_id}.",
+                career_takeaway="High Staff SWE & FDE leverage.",
+                evidence_quote="Concrete reproducible benchmark.",
+            )
+            trace = LLMCallTrace(
+                stage="stage2",
+                requested_model="gemini-flash-latest",
+                resolved_model_version="stub-flash",
+                thinking_level="HIGH",
+                api_version="v1beta",
+                estimated_cost_usd=0.002,
+                item_ids=[item.item_id],
+            )
+            return analysis, trace
+
+    stub_llm = _CadenceStubLLM()
+
+    # 1. Tuesday (Mon-Sat) run: buffers 10/10 survivor, drops 6/10 survivor from buffer, opens 0 PRs
+    tue_res = run_pipeline(
+        config,
+        seen=load_seen_state(seen_path),
+        pending=load_pending_candidates(pending_path),
+        mode="enforce",
+        offline_candidates=[cand_tue, cand_low_score],
+        llm_client=stub_llm,
+        now=datetime(2026, 11, 17, 13, 0, tzinfo=UTC),  # Tuesday
+    )
+    assert tue_res.run_coherence_gate is False
+    assert [s.item.item_id for s in tue_res.buffered_items] == ["b22222222222"]
+    assert tue_res.staged_items == []
+
+    tue_result_path = tmp_path / "tue-run-result.json"
+    tue_result_path.write_text(tue_res.model_dump_json(indent=2), encoding="utf-8")
+    tue_outcome = apply_run_result_files(
+        run_result_path=tue_result_path,
+        seen_path=seen_path,
+        health_path=health_path,
+        pending_path=pending_path,
+        digest_dir=digest_dir,
+    )
+    assert tue_outcome["run_coherence_gate"] is False
+    assert tue_outcome["buffered_count"] == 1
+    assert tue_outcome["pending_count"] == 1
+    assert tue_outcome["staged_count"] == 0
+    assert tue_outcome["added_to_digest"] == 0
+    assert tue_outcome["digest_path"] == ""
+    assert not digest_dir.exists()
+
+    # 2. Friday (Mon-Sat) run: buffers second >= 7/10 survivor (8/10), total 2 in pending-candidates.json, 0 PRs
+    fri_res = run_pipeline(
+        config,
+        seen=load_seen_state(seen_path),
+        pending=load_pending_candidates(pending_path),
+        mode="enforce",
+        offline_candidates=[cand_fri],
+        llm_client=stub_llm,
+        now=datetime(2026, 11, 20, 13, 0, tzinfo=UTC),  # Friday
+    )
+    assert fri_res.run_coherence_gate is False
+    assert [s.item.item_id for s in fri_res.buffered_items] == ["c33333333333"]
+    assert fri_res.staged_items == []
+
+    fri_result_path = tmp_path / "fri-run-result.json"
+    fri_result_path.write_text(fri_res.model_dump_json(indent=2), encoding="utf-8")
+    fri_outcome = apply_run_result_files(
+        run_result_path=fri_result_path,
+        seen_path=seen_path,
+        health_path=health_path,
+        pending_path=pending_path,
+        digest_dir=digest_dir,
+    )
+    assert fri_outcome["run_coherence_gate"] is False
+    assert fri_outcome["buffered_count"] == 1
+    assert fri_outcome["pending_count"] == 2
+    assert fri_outcome["staged_count"] == 0
+    assert fri_outcome["added_to_digest"] == 0
+    assert fri_outcome["digest_path"] == ""
+    assert not digest_dir.exists()
+
+    buffered_state = load_pending_candidates(pending_path)
+    assert set(buffered_state.items.keys()) == {"b22222222222", "c33333333333"}
+    assert buffered_state.items["b22222222222"].score == 10
+    assert buffered_state.items["c33333333333"].score == 8
+
+    # 3. Sunday / --run-coherence-gate run drains both buffered candidates and clears pending-candidates.json
+    empty_offline = tmp_path / "empty-offline.json"
+    empty_offline.write_text("[]\n", encoding="utf-8")
+    sun_result_path = tmp_path / "sun-run-result.json"
+    sun_summary_path = tmp_path / "sun-summary.md"
+
+    run_exit = main(
+        [
+            "--repo-root",
+            str(REPO_ROOT),
+            "run",
+            "--mode",
+            "enforce",
+            "--seen-path",
+            str(seen_path),
+            "--pending-path",
+            str(pending_path),
+            "--run-coherence-gate",
+            "--offline-items",
+            str(empty_offline),
+            "--output",
+            str(sun_result_path),
+            "--summary-out",
+            str(sun_summary_path),
+        ]
+    )
+    assert run_exit == 0
+    assert "run_coherence_gate=true" in sun_summary_path.read_text(encoding="utf-8")
+
+    sun_outcome = apply_run_result_files(
+        run_result_path=sun_result_path,
+        seen_path=seen_path,
+        health_path=health_path,
+        pending_path=pending_path,
+        digest_dir=digest_dir,
+    )
+    assert sun_outcome["run_coherence_gate"] is True
+    assert sun_outcome["staged_count"] == 2
+    assert sun_outcome["added_to_digest"] == 2
+    assert sun_outcome["pending_count"] == 0
+    assert sun_outcome["has_high_signal"] is True
+
+    # Buffer must be cleared on disk after Sunday gate drain
+    cleared_pending = load_pending_candidates(pending_path)
+    assert cleared_pending.items == {}
+
+    # Weekly digest file now exists with both drained survivors ordered by score descending
+    digest_file = Path(str(sun_outcome["digest_path"]))
+    assert digest_file.is_file()
+    markers = parse_radar_markers(digest_file.read_text(encoding="utf-8"))
+    assert [m[0] for m in markers] == ["b22222222222", "c33333333333"]

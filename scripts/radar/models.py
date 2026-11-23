@@ -38,6 +38,7 @@ class FeedRegistry(BaseModel):
 
 ITEM_ID_PATTERN = r"^[a-f0-9]{12}$"
 ISO_WEEK_PATTERN = r"^20\d{2}-W(?:0[1-9]|[1-4]\d|5[0-3])$"
+PENDING_BUFFER_MIN_SCORE = 7
 
 
 class CandidateItem(BaseModel):
@@ -160,6 +161,25 @@ class ScoredSurvivor(BaseModel):
     gate_failure_reason: str = ""
 
 
+class PendingCandidate(ScoredSurvivor):
+    """Stage 2 survivor (`score >= 7/10`) buffered in `radar-state/pending-candidates.json`."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    buffered_at: str = ""
+    iso_week: str = ""
+
+
+class PendingCandidatesState(BaseModel):
+    """Schema for radar-state/pending-candidates.json (backward-compatible empty defaults)."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    schema_version: int = 1
+    updated_at: str = ""
+    items: dict[str, PendingCandidate] = Field(default_factory=dict)  # keyed by item_id
+
+
 class LLMCallTrace(BaseModel):
     """Trace telemetry for a single zero-tool Gemini API call."""
 
@@ -256,6 +276,7 @@ class RunResult(BaseModel):
     mode: Literal["observe", "enforce", "bootstrap"]
     fast_lane_url: str | None = None
     force: bool = False
+    run_coherence_gate: bool = False
     status: Literal["OK", "FETCH_INCOMPLETE"] = "OK"
     error_code: str = ""
     error_message: str = ""
@@ -265,6 +286,8 @@ class RunResult(BaseModel):
     stage1_reviewed: int = 0
     stage1_verdicts: list[Stage1ItemVerdict] = Field(default_factory=list)
     stage2_results: list[ScoredSurvivor] = Field(default_factory=list)
+    buffered_items: list[ScoredSurvivor] = Field(default_factory=list)
+    drained_item_ids: list[str] = Field(default_factory=list)
     staged_items: list[ScoredSurvivor] = Field(default_factory=list)
     has_high_signal: bool = False
     new_seen_records: dict[str, SeenRecord] = Field(default_factory=dict)
