@@ -27,6 +27,11 @@ on:
         type: string
         required: false
         default: ""
+      force:
+        description: "Bypass seen.json deduplication to force re-evaluation"
+        type: boolean
+        required: false
+        default: false
 
 concurrency:
   group: radar-pipeline
@@ -67,6 +72,7 @@ jobs:
           STAGE2_THINKING: ${{ vars.STAGE2_THINKING || 'HIGH' }}
           RADAR_MODE_EFFECTIVE: ${{ github.event_name == 'workflow_dispatch' && inputs.mode || vars.RADAR_MODE || 'observe' }}
           FAST_LANE_URL: ${{ github.event_name == 'workflow_dispatch' && inputs.fast_lane_url || '' }}
+          RADAR_FORCE: ${{ github.event_name == 'workflow_dispatch' && inputs.force && 'true' || 'false' }}
         run: |
           mkdir -p .radar-out
           CMD=(uv run python -m scripts.radar.cli run
@@ -79,8 +85,17 @@ jobs:
           if [ -n "$FAST_LANE_URL" ]; then
             CMD+=(--url "$FAST_LANE_URL")
           fi
+          if [ "$RADAR_FORCE" = "true" ]; then
+            CMD+=(--force)
+          fi
+          set +e
           "${CMD[@]}"
-          cat .radar-out/summary.md >> "$GITHUB_STEP_SUMMARY"
+          RUN_EXIT=$?
+          set -e
+          if [ -f .radar-out/summary.md ]; then
+            cat .radar-out/summary.md >> "$GITHUB_STEP_SUMMARY"
+          fi
+          exit "$RUN_EXIT"
 
       - name: Upload validated run-result artifact
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2

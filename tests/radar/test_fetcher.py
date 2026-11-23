@@ -267,3 +267,99 @@ def test_parse_rss_or_atom_handles_gzipped_feed_payload() -> None:
     items = parse_rss_or_atom(gzipped, feed)
     assert len(items) == 1
     assert items[0]["title"] == "Gzipped Agent Post"
+
+
+def test_fast_lane_plan_b_resolves_x_stub_with_embedded_blog_link_and_oembed(
+    tmp_path: Path,
+) -> None:
+    import pytest
+
+    from scripts.radar.fetcher import FetchIncompleteError, build_fast_lane_candidate
+
+    config = PipelineConfig(repo_root=tmp_path, feeds_path=tmp_path / "feeds.yaml")
+    full_blog_body = " ".join(
+        ["Deterministic verification harnesses and isolated agent sandboxes prevent regressions."]
+        * 20
+    )
+    full_blog_html = (
+        f"<html><head><title>Deep Agent Harnesses in Production</title></head>"
+        f"<body><article><p>{full_blog_body}</p></article></body></html>"
+    ).encode()
+
+    # 1. X stub with embedded external blog link resolves directly to the blog post via Plan B
+    x_stub_with_link = (
+        b"<html><head><title>X</title>"
+        b'<meta property="og:url" content="https://x.com/hwchase17/status/2124181216719151585" />'
+        b"</head><body>JavaScript is not available. "
+        b'<a href="https://blog.langchain.dev/deep-agent-harnesses?utm_source=x">Read post</a>'
+        b"</body></html>"
+    )
+    responses_direct = {
+        "https://x.com/hwchase17/status/2124181216719151585": x_stub_with_link,
+        "https://blog.langchain.dev/deep-agent-harnesses": full_blog_html,
+    }
+    item = build_fast_lane_candidate(
+        "https://x.com/hwchase17/status/2124181216719151585?s=20",
+        config=config,
+        http_get=lambda u: (u, responses_direct[u]),
+    )
+    assert item.canonical_url == "https://blog.langchain.dev/deep-agent-harnesses"
+    assert item.domain == "blog.langchain.dev"
+    assert item.title == "Deep Agent Harnesses in Production"
+    assert len(item.body) >= 600
+    assert len(item.body.split()) >= 100
+
+    # 2. X JS-wall stub without inline links resolves via publish.twitter.com/oembed -> external blog link
+    x_pure_js_shell = (
+        b"<html><head><title>JavaScript is not available.</title></head>"
+        b"<body>We've detected that JavaScript is disabled in this browser.</body></html>"
+    )
+    oembed_json = json.dumps(
+        {
+            "author_name": "Harrison Chase",
+            "html": (
+                '<blockquote>New post on agent harness boundaries: '
+                '<a href="https://blog.langchain.dev/deep-agent-harnesses">blog.langchain.dev</a>'
+                "</blockquote>"
+            ),
+        }
+    ).encode("utf-8")
+
+    def fake_oembed_getter(u: str) -> tuple[str, bytes]:
+        if u.startswith("https://publish.twitter.com/oembed"):
+            return u, oembed_json
+        if u == "https://x.com/hwchase17/status/2124181216719151585":
+            return u, x_pure_js_shell
+        if u == "https://blog.langchain.dev/deep-agent-harnesses":
+            return u, full_blog_html
+        raise KeyError(u)
+
+    item_via_oembed = build_fast_lane_candidate(
+        "https://x.com/hwchase17/status/2124181216719151585",
+        config=config,
+        http_get=fake_oembed_getter,
+    )
+    assert item_via_oembed.canonical_url == "https://blog.langchain.dev/deep-agent-harnesses"
+    assert len(item_via_oembed.body) >= 600
+    assert len(item_via_oembed.body.split()) >= 100
+
+    # 3. Malicious SSRF canonical/external links inside a stub are blocked and never fetched
+    ssrf_stub = (
+        b"<html><head><title>Stub</title>"
+        b'<link rel="canonical" href="https://169.254.169.254/latest/meta-data/" />'
+        b'</head><body><a href="http://127.0.0.1/admin">Internal</a>Short stub.</body></html>'
+    )
+    fetched_urls: list[str] = []
+
+    def ssrf_tracking_getter(u: str) -> tuple[str, bytes]:
+        fetched_urls.append(u)
+        return u, ssrf_stub
+
+    with pytest.raises(FetchIncompleteError, match="FETCH_INCOMPLETE"):
+        build_fast_lane_candidate(
+            "https://stub.example.dev/thin",
+            config=config,
+            http_get=ssrf_tracking_getter,
+        )
+    assert fetched_urls == ["https://stub.example.dev/thin"]
+

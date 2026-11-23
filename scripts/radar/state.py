@@ -68,17 +68,25 @@ def apply_run_result_to_state(
     updated_seen = seen.model_copy(deep=True)
     updated_health = health.model_copy(deep=True)
 
-    updated_seen.updated_at = result.run_at
-    for item_id, rec in result.new_seen_records.items():
-        updated_seen.items[item_id] = rec
+    skip_seen_burn = result.status == "FETCH_INCOMPLETE" or (
+        bool(result.fast_lane_url) and result.mode == "observe"
+    )
+    if not skip_seen_burn:
+        updated_seen.updated_at = result.run_at
+        for item_id, rec in result.new_seen_records.items():
+            if rec.verdict == "FETCH_INCOMPLETE":
+                continue
+            if rec.feed_id == "fast-lane" and result.mode == "observe":
+                continue
+            updated_seen.items[item_id] = rec
 
-    if len(updated_seen.items) > max_seen_items:
-        sorted_pairs = sorted(
-            updated_seen.items.items(),
-            key=lambda kv: (kv[1].first_seen_at or "", kv[0]),
-            reverse=True,
-        )[:max_seen_items]
-        updated_seen.items = dict(sorted_pairs)
+        if len(updated_seen.items) > max_seen_items:
+            sorted_pairs = sorted(
+                updated_seen.items.items(),
+                key=lambda kv: (kv[1].first_seen_at or "", kv[0]),
+                reverse=True,
+            )[:max_seen_items]
+            updated_seen.items = dict(sorted_pairs)
 
     updated_health.updated_at = result.run_at
     for fs in result.feed_summaries:

@@ -450,3 +450,167 @@ def test_untrusted_delimiter_breakout_and_artifact_schema_bounds() -> None:
     assert f"{4:012x}" in capped_seen.items
     assert f"{0:012x}" not in capped_seen.items
 
+
+def test_fast_lane_login_wall_exits_nonzero_as_fetch_incomplete_with_zero_llm_and_zero_seen(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    from scripts.radar.cli import main
+    from scripts.radar.models import SeenRecord
+
+    config = PipelineConfig(repo_root=REPO_ROOT, feeds_path=REPO_ROOT / "radar" / "feeds.yaml")
+    login_wall_html = (
+        b"<html><head><title>Log in to X</title></head>"
+        b"<body>JavaScript is not available. Please sign in to continue reading.</body></html>"
+    )
+    llm_calls = 0
+
+    class _FailIfCalledLLM:
+        def triage_stage1_batch(self, items, repo_inventory):
+            nonlocal llm_calls
+            llm_calls += 1
+            raise AssertionError("LLM Stage 1 must never be called on FETCH_INCOMPLETE")
+
+        def analyze_stage2_survivor(self, item, target_repo_context):
+            nonlocal llm_calls
+            llm_calls += 1
+            raise AssertionError("LLM Stage 2 must never be called on FETCH_INCOMPLETE")
+
+    target_url = "https://x.com/hwchase17/status/2124181216719151585?a=PWiUEqVg4r5jGgo5Bmk"
+    res = run_pipeline(
+        config,
+        seen=SeenState(),
+        mode="observe",
+        fast_lane_url=target_url,
+        llm_client=_FailIfCalledLLM(),
+        http_get=lambda u: (u, login_wall_html),
+        now=datetime(2026, 11, 22, 22, 23, tzinfo=UTC),
+    )
+    assert llm_calls == 0
+    assert res.status == "FETCH_INCOMPLETE"
+    assert res.error_code == "FETCH_INCOMPLETE"
+    assert res.total_estimated_cost_usd == 0.0
+    assert res.traces == []
+    assert res.new_seen_records == {}
+    assert "FETCH_INCOMPLETE" in res.summary_markdown
+    assert target_url in res.summary_markdown
+    assert "body_chars=" in res.summary_markdown
+
+    # Even if apply_run_result_files is called on the artifact, 0 records are written to seen.json
+    run_result_path = tmp_path / "incomplete-run-result.json"
+    seen_path = tmp_path / "state" / "seen.json"
+    health_path = tmp_path / "state" / "feed-health.json"
+    run_result_path.write_text(res.model_dump_json(indent=2), encoding="utf-8")
+    apply_run_result_files(
+        run_result_path=run_result_path,
+        seen_path=seen_path,
+        health_path=health_path,
+    )
+    assert load_seen_state(seen_path).items == {}
+
+    # CLI `run --url` on a login/paywall stub must exit non-zero (1) on workflow_dispatch
+    monkeypatch.setattr(
+        "scripts.radar.fetcher.safe_http_get",
+        lambda u, **kwargs: (u, login_wall_html),
+    )
+    cli_out = tmp_path / "cli-run-result.json"
+    cli_summary = tmp_path / "cli-summary.md"
+    exit_code = main(
+        [
+            "--repo-root",
+            str(REPO_ROOT),
+            "run",
+            "--mode",
+            "observe",
+            "--url",
+            target_url,
+            "--output",
+            str(cli_out),
+            "--summary-out",
+            str(cli_summary),
+        ]
+    )
+    assert exit_code == 1
+    assert "FETCH_INCOMPLETE" in cli_summary.read_text(encoding="utf-8")
+
+    # Verify Plan B + observe mode never burns seen.json, --force overrides seen.json,
+    # and Job Summary includes fast_lane_url, body_chars, and Stage 1 drop reasons.
+    full_article_body = " ".join(
+        [
+            "Verification engineering with base-branch REVIEW.md and deterministic property tests "
+            "prevents agentic regressions across production repositories."
+        ]
+        * 15
+    )
+    x_stub_with_blog = (
+        b"<html><head><title>X</title></head><body>"
+        b'<a href="https://blog.example.dev/verification-deep-dive">Read blog</a>'
+        b"</body></html>"
+    )
+    blog_html = (
+        f"<html><head><title>Verification Deep Dive</title></head>"
+        f"<body><article><p>{full_article_body}</p></article></body></html>"
+    ).encode()
+    plan_b_responses = {
+        "https://x.com/hwchase17/status/2124181216719151585?a=PWiUEqVg4r5jGgo5Bmk": x_stub_with_blog,
+        "https://blog.example.dev/verification-deep-dive": blog_html,
+    }
+    stub_llm = _InventoryAwareStubLLM()
+
+    observe_fast = run_pipeline(
+        config,
+        seen=SeenState(),
+        mode="observe",
+        fast_lane_url=target_url,
+        llm_client=stub_llm,
+        http_get=lambda u: (u, plan_b_responses[u]),
+        now=datetime(2026, 11, 22, 22, 30, tzinfo=UTC),
+    )
+    assert observe_fast.status == "OK"
+    assert observe_fast.candidates_fetched == 1
+    assert observe_fast.stage1_reviewed == 1
+    assert observe_fast.new_seen_records == {}
+    assert "fast_lane_url=" in observe_fast.summary_markdown
+    assert target_url in observe_fast.summary_markdown
+    assert "body_chars" in observe_fast.summary_markdown
+    assert "ALREADY_COVERED" in observe_fast.summary_markdown
+    assert "Already covered in current playbooks." in observe_fast.summary_markdown
+
+    # If the resolved URL is already in seen.json, default run skips it while force=True re-runs it
+    resolved_id = observe_fast.candidate_summaries[0].item_id
+    pre_seen = SeenState(
+        items={
+            resolved_id: SeenRecord(
+                canonical_url="https://blog.example.dev/verification-deep-dive",
+                feed_id="fast-lane",
+                verdict="ALREADY_COVERED",
+            )
+        }
+    )
+    skipped_res = run_pipeline(
+        config,
+        seen=pre_seen,
+        mode="observe",
+        fast_lane_url=target_url,
+        force=False,
+        llm_client=stub_llm,
+        http_get=lambda u: (u, plan_b_responses[u]),
+        now=datetime(2026, 11, 22, 22, 35, tzinfo=UTC),
+    )
+    assert skipped_res.candidates_fetched == 0
+
+    forced_res = run_pipeline(
+        config,
+        seen=pre_seen,
+        mode="observe",
+        fast_lane_url=target_url,
+        force=True,
+        llm_client=stub_llm,
+        http_get=lambda u: (u, plan_b_responses[u]),
+        now=datetime(2026, 11, 22, 22, 36, tzinfo=UTC),
+    )
+    assert forced_res.candidates_fetched == 1
+    assert forced_res.stage1_reviewed == 1
+    assert "force=true" in forced_res.summary_markdown
+
+
