@@ -69,13 +69,15 @@ jobs:
       - name: Install dependencies
         run: uv sync --no-dev
 
-      - name: Run Stage 0 -> Stage 1 -> Survivor Enricher -> Stage 2
+      - name: Run Stage 0 -> Stage 1 -> Survivor Enricher -> Stage 2 -> Stage 3
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           STAGE1_MODEL: ${{ vars.STAGE1_MODEL || 'gemini-flash-lite-latest' }}
           STAGE1_THINKING: ${{ vars.STAGE1_THINKING || 'LOW' }}
           STAGE2_MODEL: ${{ vars.STAGE2_MODEL || 'gemini-flash-latest' }}
           STAGE2_THINKING: ${{ vars.STAGE2_THINKING || 'HIGH' }}
+          STAGE3_MODEL: ${{ vars.STAGE3_MODEL || 'gemini-4-neon' }}
+          STAGE3_THINKING: ${{ vars.STAGE3_THINKING || 'HIGH' }}
           RADAR_MODE_EFFECTIVE: ${{ github.event_name == 'workflow_dispatch' && inputs.mode || vars.RADAR_MODE || 'observe' }}
           FAST_LANE_URL: ${{ github.event_name == 'workflow_dispatch' && inputs.fast_lane_url || '' }}
           RADAR_FORCE: ${{ github.event_name == 'workflow_dispatch' && inputs.force && 'true' || 'false' }}
@@ -164,11 +166,13 @@ jobs:
             --seen-path /tmp/radar-state-wt/seen.json \
             --health-path /tmp/radar-state-wt/feed-health.json \
             --pending-path /tmp/radar-state-wt/pending-candidates.json \
+            --audits-path /tmp/radar-state-wt/weekly-audits.md \
             --summary-out /tmp/radar-pr-body.md)
           echo "$OUT_JSON"
           echo "mode=$(echo "$OUT_JSON" | python3 -c 'import json,sys; print(json.load(sys.stdin)["mode"])')" >> "$GITHUB_OUTPUT"
           echo "iso_week=$(echo "$OUT_JSON" | python3 -c 'import json,sys; print(json.load(sys.stdin)["iso_week"])')" >> "$GITHUB_OUTPUT"
           echo "run_coherence_gate=$(echo "$OUT_JSON" | python3 -c 'import json,sys; print(str(json.load(sys.stdin)["run_coherence_gate"]).lower())')" >> "$GITHUB_OUTPUT"
+          echo "stage3_decision=$(echo "$OUT_JSON" | python3 -c 'import json,sys; print(json.load(sys.stdin)["stage3_decision"])')" >> "$GITHUB_OUTPUT"
           echo "buffered_count=$(echo "$OUT_JSON" | python3 -c 'import json,sys; print(json.load(sys.stdin)["buffered_count"])')" >> "$GITHUB_OUTPUT"
           echo "staged_count=$(echo "$OUT_JSON" | python3 -c 'import json,sys; print(json.load(sys.stdin)["staged_count"])')" >> "$GITHUB_OUTPUT"
           echo "has_high_signal=$(echo "$OUT_JSON" | python3 -c 'import json,sys; print(str(json.load(sys.stdin)["has_high_signal"]).lower())')" >> "$GITHUB_OUTPUT"
@@ -187,13 +191,16 @@ jobs:
           git -C /tmp/radar-state-wt config user.name "github-actions[bot]"
           git -C /tmp/radar-state-wt config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git -C /tmp/radar-state-wt add seen.json feed-health.json pending-candidates.json feed-health-report.md
+          if [ -f /tmp/radar-state-wt/weekly-audits.md ]; then
+            git -C /tmp/radar-state-wt add weekly-audits.md
+          fi
           if ! git -C /tmp/radar-state-wt diff --cached --quiet; then
-            git -C /tmp/radar-state-wt commit -m "chore(radar-state): update seen, pending buffer, and feed telemetry"
+            git -C /tmp/radar-state-wt commit -m "chore(radar-state): update seen, pending buffer, audits, and feed telemetry"
             git -C /tmp/radar-state-wt push origin radar-state
           fi
 
-      - name: Stage rolling weekly Draft PR (enforce mode, weekly gate, & >=1 survivor only)
-        if: steps.apply.outputs.mode == 'enforce' && steps.apply.outputs.run_coherence_gate == 'true' && steps.apply.outputs.staged_count != '0'
+      - name: Stage rolling weekly Draft PR (enforce mode & Stage 3 APPROVE_SYNTHESIS only)
+        if: steps.apply.outputs.mode == 'enforce' && steps.apply.outputs.stage3_decision == 'APPROVE_SYNTHESIS' && steps.apply.outputs.staged_count != '0'
         env:
           GH_TOKEN: ${{ github.token }}
           ISO_WEEK: ${{ steps.apply.outputs.iso_week }}
@@ -222,6 +229,7 @@ jobs:
             --seen-path /tmp/radar-state-wt/seen.json \
             --health-path /tmp/radar-state-wt/feed-health.json \
             --pending-path /tmp/radar-state-wt/pending-candidates.json \
+            --audits-path /tmp/radar-state-wt/weekly-audits.md \
             --digest-dir radar \
             --no-update-state
 

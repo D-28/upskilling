@@ -25,18 +25,20 @@ HTTP_TIMEOUT_SECONDS = 10.0
 MAX_STAGE1_EXCERPT_CHARS = 1_500
 MAX_STAGE2_BODY_CHARS = 16_000
 SHORT_BODY_ENRICH_THRESHOLD = 600
-MAX_RUN_COST_USD = 0.25
+MAX_RUN_COST_USD = 0.50
 MAX_SEEN_ITEMS = 5_000
 
 # Rubric thresholds (deterministic Python sum of five 0..2 dimensions -> 0..10)
 STAGE_SCORE_THRESHOLD = 6
 HIGH_SIGNAL_SCORE_THRESHOLD = 9
 
-# Dynamic latest model aliases (overridable via repo vars / env)
+# Dynamic latest model aliases & Stage 3 Coherence Gate frontier model (overridable via repo vars / env)
 DEFAULT_STAGE1_MODEL = "gemini-flash-lite-latest"
 DEFAULT_STAGE1_THINKING = "LOW"
 DEFAULT_STAGE2_MODEL = "gemini-flash-latest"
 DEFAULT_STAGE2_THINKING = "HIGH"
+DEFAULT_STAGE3_MODEL = "gemini-4-neon"
+DEFAULT_STAGE3_THINKING = "HIGH"
 
 VALID_THINKING_LEVELS = frozenset({"MINIMAL", "LOW", "MEDIUM", "HIGH", "XHIGH"})
 
@@ -46,6 +48,7 @@ VALID_THINKING_LEVELS = frozenset({"MINIMAL", "LOW", "MEDIUM", "HIGH", "XHIGH"})
 MODEL_PRICE_ESTIMATES_PER_MTOK: dict[str, tuple[float, float, float]] = {
     "flash-lite": (0.35, 0.04, 2.75),
     "flash": (0.75, 0.08, 4.50),
+    "neon": (3.00, 0.15, 15.00),
     "pro": (2.50, 0.25, 15.00),
     "argon": (2.50, 0.25, 15.00),
     "carbon": (3.00, 0.30, 18.00),
@@ -87,7 +90,7 @@ def estimate_cost_usd(
     """Estimate request USD cost conservatively for circuit-breaker accounting."""
     lowered = model_name.lower()
     rates = MODEL_PRICE_ESTIMATES_PER_MTOK["default"]
-    for key in ("flash-lite", "flash", "carbon", "argon", "pro"):
+    for key in ("flash-lite", "flash", "neon", "carbon", "argon", "pro"):
         if key in lowered:
             rates = MODEL_PRICE_ESTIMATES_PER_MTOK[key]
             break
@@ -112,6 +115,8 @@ class PipelineConfig:
     stage1_thinking: str = DEFAULT_STAGE1_THINKING
     stage2_model: str = DEFAULT_STAGE2_MODEL
     stage2_thinking: str = DEFAULT_STAGE2_THINKING
+    stage3_model: str = DEFAULT_STAGE3_MODEL
+    stage3_thinking: str = DEFAULT_STAGE3_THINKING
     max_items_per_run: int = MAX_ITEMS_PER_RUN
     max_stage1_batch_size: int = MAX_STAGE1_BATCH_SIZE
     max_stage2_survivors: int = MAX_STAGE2_SURVIVORS
@@ -126,11 +131,15 @@ class PipelineConfig:
         root = (repo_root or Path.cwd()).resolve()
         stage1_model = os.environ.get("STAGE1_MODEL", DEFAULT_STAGE1_MODEL).strip() or DEFAULT_STAGE1_MODEL
         stage2_model = os.environ.get("STAGE2_MODEL", DEFAULT_STAGE2_MODEL).strip() or DEFAULT_STAGE2_MODEL
+        stage3_model = os.environ.get("STAGE3_MODEL", DEFAULT_STAGE3_MODEL).strip() or DEFAULT_STAGE3_MODEL
         stage1_thinking = validate_thinking_level(
             stage1_model, os.environ.get("STAGE1_THINKING", DEFAULT_STAGE1_THINKING)
         )
         stage2_thinking = validate_thinking_level(
             stage2_model, os.environ.get("STAGE2_THINKING", DEFAULT_STAGE2_THINKING)
+        )
+        stage3_thinking = validate_thinking_level(
+            stage3_model, os.environ.get("STAGE3_THINKING", DEFAULT_STAGE3_THINKING)
         )
         return cls(
             repo_root=root,
@@ -139,6 +148,8 @@ class PipelineConfig:
             stage1_thinking=stage1_thinking,
             stage2_model=stage2_model,
             stage2_thinking=stage2_thinking,
+            stage3_model=stage3_model,
+            stage3_thinking=stage3_thinking,
             max_items_per_run=int(os.environ.get("RADAR_MAX_ITEMS", str(MAX_ITEMS_PER_RUN))),
             max_stage2_survivors=int(
                 os.environ.get("RADAR_MAX_SURVIVORS", str(MAX_STAGE2_SURVIVORS))

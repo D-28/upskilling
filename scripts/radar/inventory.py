@@ -19,6 +19,14 @@ INVENTORY_GLOBS: tuple[str, ...] = (
     "hooks/*.md",
 )
 
+FULL_REPO_BASELINE_GLOBS: tuple[str, ...] = (
+    "playbooks/*.md",
+    "skills/*/SKILL.md",
+    "templates/*",
+    "docs/GLOSSARY.md",
+    "docs/adr/*.md",
+)
+
 _HEADING_RE = re.compile(r"^(#{1,3})\s+(.+?)\s*$")
 _QUOTE_RE = re.compile(r"^>\s*(.+?)\s*$")
 
@@ -168,3 +176,63 @@ def load_target_repo_context(
     if not chunks:
         return build_repo_inventory(repo_root, exclude_files=exclude_files)
     return "\n\n".join(chunks)
+
+
+def list_full_repo_baseline_files(
+    repo_root: Path,
+    exclude_files: Collection[str] = (),
+) -> list[Path]:
+    """Return sorted authoritative baseline files for Stage 3 full-repo coherence audits."""
+    excluded = {p.strip("/") for p in exclude_files}
+    root_resolved = repo_root.resolve()
+    found: list[Path] = []
+    seen_rels: set[str] = set()
+    for pattern in FULL_REPO_BASELINE_GLOBS:
+        for path in sorted(root_resolved.glob(pattern)):
+            if not path.is_file():
+                continue
+            resolved = path.resolve()
+            try:
+                rel = resolved.relative_to(root_resolved).as_posix()
+            except ValueError:
+                continue
+            if rel in excluded or rel in seen_rels:
+                continue
+            seen_rels.add(rel)
+            found.append(resolved)
+    return found
+
+
+def load_full_repo_baseline(
+    repo_root: Path,
+    exclude_files: Collection[str] = (),
+    max_total_chars: int = 120_000,
+) -> str:
+    """Load the full authoritative repository baseline (~13K-19K tokens) for Stage 3.
+
+    Covers `playbooks/`, `skills/`, `templates/`, `docs/GLOSSARY.md`, and `docs/adr/`
+    so Stage 3 audits cross-file harmony, glossary terms, and ADRs in one pass.
+    """
+    files = list_full_repo_baseline_files(repo_root, exclude_files=exclude_files)
+    root_resolved = repo_root.resolve()
+    header = (
+        "# FULL REPOSITORY BASELINE (Authoritative Current State)\n"
+        "Target profile: Senior SWE -> Staff SWE / FDE-FDSE using Antigravity, "
+        "GitHub Copilot CLI, Claude Code, Codex.\n"
+    )
+    chunks: list[str] = [header]
+    total = len(header)
+
+    for path in files:
+        rel = path.relative_to(root_resolved).as_posix()
+        content = path.read_text(encoding="utf-8", errors="replace").strip()
+        block = f"=== REPO BASELINE FILE: {rel} ===\n{content}\n"
+        if total + len(block) > max_total_chars:
+            remaining = max_total_chars - total
+            if remaining > 500:
+                chunks.append(block[: remaining - 3].rstrip() + "...")
+            break
+        chunks.append(block)
+        total += len(block)
+
+    return "\n\n".join(chunks).strip()
