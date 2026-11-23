@@ -60,6 +60,10 @@ Don't read the repo front-to-back like a textbook—build the core mental frame 
 |---|---|---|
 | **[`.gitignore`](.gitignore)** | Keeps OS junk, `.env` secrets, and `.scratch/` files out of commits | Hygiene |
 | **[`todo.md`](todo.md)** | Backlog of concrete builds, Staff SWE / FDE research angles, and pruning dates | Roadmap |
+| **[`docs/GLOSSARY.md`](docs/GLOSSARY.md)** | Canonical terms for the signal-ingestion pipeline (`Candidate Item`, `Pending Buffer`, `Coherence Gate`, `Systemic Poison`) | G, H |
+| **[`docs/specs/coherence-gate-and-fast-lane.md`](docs/specs/coherence-gate-and-fast-lane.md)** | Spec & vertical tickets for the weekly `gemini-4-neon` Coherence Gate and fail-closed Fast-Lane (see **[ADR-0001](docs/adr/0001-coherence-gate-and-fast-lane.md)**) | B, C, G |
+| **[`docs/radar-setup.md`](docs/radar-setup.md)** | Setup & operations guide for the two-job GitHub Actions signal pipeline ([`.github/workflows/radar-ingest.yml`](.github/workflows/radar-ingest.yml)) | B, C, F |
+| **[`scripts/radar/`](scripts/radar/cli.py)** | Zero-tool Stage 0–3 signal ingestion pipeline (`radar/feeds.yaml`, `pending-candidates.json`, `weekly-audits.md`, SSRF/sanitization walls) | B, C, D, F |
 | **[`radar/2026-11-18-digest.md`](radar/2026-11-18-digest.md)** | Signal/noise triage & self-contained notes for links **A–H** | A–H |
 | **[`playbooks/harness-loop-graph.md`](playbooks/harness-loop-graph.md)** | 3-layer agent architecture, `STE-80` instruction grammar, diagnostics, Undo-Price Gating | A, C, E, H |
 | **[`playbooks/verification-engineering.md`](playbooks/verification-engineering.md)** | Test hierarchy, anti-gaming review setup, empirical rule evals, 4-Level Understanding Ladder | B, C, G, H |
