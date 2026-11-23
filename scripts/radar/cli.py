@@ -227,7 +227,7 @@ def build_job_summary_markdown(result: RunResult) -> str:
                 "### Stage 3 Systemic Coherence Gate",
                 "",
                 f"- **Decision:** `{v3.decision}`",
-                f"- **Executive Summary:** {sanitize_single_line(v3.executive_summary, 320)}",
+                f"- **Executive Summary:** {sanitize_single_line(v3.executive_summary, 800)}",
             ]
         )
         if v3.item_audits:
@@ -244,7 +244,7 @@ def build_job_summary_markdown(result: RunResult) -> str:
                 poisons_cell = ", ".join(audit.poisons.active_poisons()) or "none"
                 related_cell = ", ".join(audit.related_item_ids) or "-"
                 files_cell = ", ".join(filter_allowed_repo_paths(audit.affected_repo_files)) or "-"
-                rationale_cell = sanitize_single_line(audit.rationale, 220)
+                rationale_cell = sanitize_single_line(audit.rationale, 500)
                 lines.append(
                     f"| `{audit.item_id}` | {title_cell} | `{audit.verdict}` | `{poisons_cell}` | "
                     f"`{related_cell}` | `{files_cell}` | {rationale_cell} |"
