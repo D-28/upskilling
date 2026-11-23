@@ -1,7 +1,7 @@
 """Backward-compatible state persistence, PR outcome reconciliation, and feed health reporting.
 
-State files (`seen.json`, `feed-health.json`) live on the dedicated orphan branch
-`radar-state` so `main` remains clean and branch-protected.
+State files (`seen.json`, `feed-health.json`, `pending-candidates.json`) live on the dedicated
+orphan branch `radar-state` so `main` remains clean and branch-protected.
 """
 
 from __future__ import annotations
@@ -13,10 +13,13 @@ from pathlib import Path
 from scripts.radar.config import MAX_SEEN_ITEMS
 from scripts.radar.fetcher import extract_domain
 from scripts.radar.models import (
+    PENDING_BUFFER_MIN_SCORE,
     DomainHitRecord,
     FeedHealthState,
     FeedRegistry,
     FeedStats,
+    PendingCandidate,
+    PendingCandidatesState,
     RunResult,
     SeenState,
 )
@@ -55,6 +58,61 @@ def save_feed_health(path: Path, state: FeedHealthState) -> None:
         json.dumps(state.model_dump(mode="json"), indent=2, sort_keys=True) + "\n",
         encoding="utf-8",
     )
+
+
+def load_pending_candidates(path: Path) -> PendingCandidatesState:
+    """Load pending-candidates.json safely with backward-compatible empty defaults when absent."""
+    if not path.is_file():
+        return PendingCandidatesState()
+    text = path.read_text(encoding="utf-8").strip()
+    if not text:
+        return PendingCandidatesState()
+    raw = json.loads(text)
+    return PendingCandidatesState.model_validate(raw or {})
+
+
+def save_pending_candidates(path: Path, state: PendingCandidatesState) -> None:
+    """Persist pending-candidates.json with stable sorted keys for clean git diffs on radar-state."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps(state.model_dump(mode="json"), indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+
+
+def apply_run_result_to_pending(
+    pending: PendingCandidatesState,
+    result: RunResult,
+) -> PendingCandidatesState:
+    """Buffer Mon-Sat survivors (`>= 7/10`) or clear the buffer after a weekly Coherence Gate run."""
+    updated = pending.model_copy(deep=True)
+    if result.status == "FETCH_INCOMPLETE" or result.mode == "bootstrap":
+        return updated
+    if bool(result.fast_lane_url) and result.mode == "observe":
+        return updated
+
+    if result.run_coherence_gate:
+        updated.items.clear()
+        updated.updated_at = result.run_at
+        return updated
+
+    for scored in result.buffered_items:
+        if (
+            scored.disposition in ("STAGE", "HIGH_SIGNAL")
+            and scored.score >= PENDING_BUFFER_MIN_SCORE
+        ):
+            updated.items[scored.item.item_id] = PendingCandidate(
+                item=scored.item,
+                analysis=scored.analysis,
+                score=scored.score,
+                disposition=scored.disposition,
+                gate_failure_reason=scored.gate_failure_reason,
+                buffered_at=result.run_at,
+                iso_week=result.iso_week,
+            )
+    if result.buffered_items:
+        updated.updated_at = result.run_at
+    return updated
 
 
 def apply_run_result_to_state(

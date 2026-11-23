@@ -23,9 +23,11 @@ from scripts.radar.fetcher import (
 from scripts.radar.inventory import build_repo_inventory, load_target_repo_context
 from scripts.radar.llm import BudgetExceededError, GeminiRadarClient, RadarLLMClient
 from scripts.radar.models import (
+    PENDING_BUFFER_MIN_SCORE,
     CandidateItem,
     CandidateSummary,
     FeedFetchSummary,
+    PendingCandidatesState,
     RunResult,
     ScoredSurvivor,
     SeenRecord,
@@ -39,11 +41,14 @@ from scripts.radar.security import (
     sanitize_single_line,
 )
 from scripts.radar.state import (
+    apply_run_result_to_pending,
     apply_run_result_to_state,
     generate_feed_health_report,
     load_feed_health,
+    load_pending_candidates,
     load_seen_state,
     save_feed_health,
+    save_pending_candidates,
     save_seen_state,
 )
 
@@ -77,7 +82,10 @@ def build_job_summary_markdown(result: RunResult) -> str:
         f"## Radar Ingestion Summary — `{result.iso_week}` (`{result.mode}`)",
         "",
         f"- **Run timestamp:** `{sanitize_single_line(result.run_at, 64)}`",
-        f"- **Run inputs:** `mode={result.mode}` · `fast_lane_url={fast_lane_display}` · `force={str(result.force).lower()}`",
+        (
+            f"- **Run inputs:** `mode={result.mode}` · `fast_lane_url={fast_lane_display}` · "
+            f"`force={str(result.force).lower()}` · `run_coherence_gate={str(result.run_coherence_gate).lower()}`"
+        ),
         f"- **Pipeline status:** `{result.status}`"
         + (
             f" (`{sanitize_single_line(result.error_code, 40)}`)"
@@ -87,7 +95,13 @@ def build_job_summary_markdown(result: RunResult) -> str:
         f"- **New candidates after Stage 0:** `{result.candidates_fetched}`",
         f"- **Stage 1 reviewed:** `{result.stage1_reviewed}`",
         f"- **Stage 2 evaluated:** `{len(result.stage2_results)}`",
-        f"- **Staged (score ≥ 6/10):** `{len(result.staged_items)}` (High Signal ≥ 9/10: `{'yes' if result.has_high_signal else 'no'}`)",
+        f"- **Buffered for weekly gate (score ≥ 7/10):** `{len(result.buffered_items)}`"
+        + (
+            f" (Drained from pending buffer: `{len(result.drained_item_ids)}`)"
+            if result.drained_item_ids
+            else ""
+        ),
+        f"- **Staged (score ≥ 7/10):** `{len(result.staged_items)}` (High Signal ≥ 9/10: `{'yes' if result.has_high_signal else 'no'}`)",
         f"- **Estimated API cost:** `${result.total_estimated_cost_usd:.4f}`"
         + (" *(cost cap triggered)*" if result.cost_cap_triggered else ""),
     ]
@@ -183,6 +197,21 @@ def build_job_summary_markdown(result: RunResult) -> str:
             lines.append(
                 f"- **[{s.score}/10 · {s.disposition}]** {safe_title} (`{safe_feed}`) -> {targets}"
             )
+    elif result.buffered_items:
+        lines.extend(
+            [
+                "",
+                "### Survivors Buffered in `pending-candidates.json` (Awaiting Weekly Gate)",
+                "",
+            ]
+        )
+        for s in result.buffered_items:
+            safe_title = sanitize_single_line(s.item.title, 180)
+            safe_feed = sanitize_single_line(s.item.feed_id, 60)
+            targets = ", ".join(filter_allowed_repo_paths(s.analysis.target_repo_files)) or "radar/"
+            lines.append(
+                f"- **[{s.score}/10 · BUFFERED]** {safe_title} (`{safe_feed}`) -> {targets}"
+            )
     else:
         lines.extend(["", "_Nothing crossed the bar this run._"])
 
@@ -201,21 +230,29 @@ def run_pipeline(
     config: PipelineConfig,
     *,
     seen: SeenState,
+    pending: PendingCandidatesState | None = None,
     mode: str = "observe",
     fast_lane_url: str | None = None,
     force: bool = False,
+    run_coherence_gate: bool | None = None,
     llm_client: RadarLLMClient | None = None,
     http_get: Callable[[str], tuple[str, bytes]] | None = None,
     offline_candidates: list[CandidateItem] | None = None,
     exclude_repo_files: list[str] | None = None,
     now: datetime | None = None,
 ) -> RunResult:
-    """Execute Stage 0 -> Stage 1 -> Survivor Enricher -> Stage 2 -> Deterministic Scorer."""
+    """Execute Stage 0 -> Stage 1 -> Survivor Enricher -> Stage 2 -> Buffer / Weekly Gate."""
     run_dt = now or datetime.now(UTC)
     run_at = run_dt.isoformat()
     iso_week = current_iso_week(run_dt)
     excluded = tuple(exclude_repo_files or ())
     effective_seen = SeenState() if force else seen
+    if run_coherence_gate is None:
+        effective_coherence_gate = (
+            run_dt.isoweekday() == 7 and not fast_lane_url and mode != "bootstrap"
+        )
+    else:
+        effective_coherence_gate = bool(run_coherence_gate) and mode != "bootstrap"
 
     feed_summaries: list[FeedFetchSummary] = []
     if offline_candidates is not None:
@@ -233,6 +270,7 @@ def run_pipeline(
                 mode=mode,  # type: ignore[arg-type]
                 fast_lane_url=fast_lane_url,
                 force=force,
+                run_coherence_gate=effective_coherence_gate,
                 status="FETCH_INCOMPLETE",
                 error_code="FETCH_INCOMPLETE",
                 error_message=str(exc),
@@ -275,6 +313,7 @@ def run_pipeline(
         mode=mode,  # type: ignore[arg-type]
         fast_lane_url=fast_lane_url,
         force=force,
+        run_coherence_gate=effective_coherence_gate,
         feed_summaries=feed_summaries,
         candidate_summaries=[_to_candidate_summary(c) for c in candidates],
         candidates_fetched=len(candidates),
@@ -294,102 +333,134 @@ def run_pipeline(
         result.summary_markdown = build_job_summary_markdown(result)
         return result
 
-    if not candidates:
+    has_pending_to_drain = bool(effective_coherence_gate and pending and pending.items)
+    if not candidates and not has_pending_to_drain:
         result.summary_markdown = build_job_summary_markdown(result)
         return result
 
-    client = llm_client or GeminiRadarClient(config)
-    repo_inventory = build_repo_inventory(config.repo_root, exclude_files=excluded)
+    qualifying_survivors: list[ScoredSurvivor] = []
+    if candidates:
+        client = llm_client or GeminiRadarClient(config)
+        repo_inventory = build_repo_inventory(config.repo_root, exclude_files=excluded)
 
-    # Stage 1: batched zero-tool triage (up to 10 items per call)
-    by_id = {c.item_id: c for c in candidates}
-    summaries_by_id = {cs.item_id: cs for cs in result.candidate_summaries}
-    verdicts_by_id: dict[str, Stage1ItemVerdict] = {}
-    batch_size = max(1, config.max_stage1_batch_size)
+        # Stage 1: batched zero-tool triage (up to 10 items per call)
+        by_id = {c.item_id: c for c in candidates}
+        summaries_by_id = {cs.item_id: cs for cs in result.candidate_summaries}
+        verdicts_by_id: dict[str, Stage1ItemVerdict] = {}
+        batch_size = max(1, config.max_stage1_batch_size)
 
-    for start in range(0, len(candidates), batch_size):
-        batch = candidates[start : start + batch_size]
-        try:
-            batch_resp, trace = client.triage_stage1_batch(batch, repo_inventory)
-            result.traces.append(trace)
-            result.total_estimated_cost_usd = round(
-                result.total_estimated_cost_usd + trace.estimated_cost_usd, 6
+        for start in range(0, len(candidates), batch_size):
+            batch = candidates[start : start + batch_size]
+            try:
+                batch_resp, trace = client.triage_stage1_batch(batch, repo_inventory)
+                result.traces.append(trace)
+                result.total_estimated_cost_usd = round(
+                    result.total_estimated_cost_usd + trace.estimated_cost_usd, 6
+                )
+                for v in batch_resp.verdicts:
+                    if v.item_id in by_id:
+                        verdicts_by_id[v.item_id] = v
+                        result.stage1_verdicts.append(v)
+            except BudgetExceededError:
+                result.cost_cap_triggered = True
+                break
+
+        result.stage1_reviewed = len(verdicts_by_id)
+
+        # Mark reviewed candidates seen except manual observe fast-lane test runs
+        skip_seen_burn = bool(fast_lane_url) and mode == "observe"
+        if not skip_seen_burn:
+            for item_id, verdict in verdicts_by_id.items():
+                item = by_id[item_id]
+                if item.feed_id == "fast-lane" and mode == "observe":
+                    continue
+                result.new_seen_records[item_id] = SeenRecord(
+                    canonical_url=item.canonical_url,
+                    title_hash=item.title_hash,
+                    content_hash=item.content_hash,
+                    feed_id=item.feed_id,
+                    first_seen_at=run_at,
+                    verdict=verdict.verdict,
+                )
+
+        survivor_verdicts = [v for v in result.stage1_verdicts if v.verdict == "SURVIVOR"][
+            : config.max_stage2_survivors
+        ]
+
+        # Stage 2: enrich short-body survivors deterministically, then deep rubric delta
+        for sv in survivor_verdicts:
+            item = by_id[sv.item_id]
+            if offline_candidates is None:
+                item = enrich_survivor_body(item, config=config, http_get=http_get)
+                by_id[sv.item_id] = item
+                if sv.item_id in summaries_by_id:
+                    summaries_by_id[sv.item_id].body_chars = len(item.body)
+                    summaries_by_id[sv.item_id].word_count = len(item.body.split())
+                    summaries_by_id[sv.item_id].enrichment_status = item.enrichment_status
+                if item.enrichment_status == "fetch_blocked":
+                    if item.item_id in result.new_seen_records:
+                        result.new_seen_records[item.item_id].verdict = "FETCH_BLOCKED"
+                    continue
+
+            target_files = [sv.matched_repo_file] if sv.matched_repo_file else []
+            target_context = load_target_repo_context(
+                config.repo_root, target_files, exclude_files=excluded
             )
-            for v in batch_resp.verdicts:
-                if v.item_id in by_id:
-                    verdicts_by_id[v.item_id] = v
-                    result.stage1_verdicts.append(v)
-        except BudgetExceededError:
-            result.cost_cap_triggered = True
-            break
+            try:
+                analysis, trace = client.analyze_stage2_survivor(item, target_context)
+                result.traces.append(trace)
+                result.total_estimated_cost_usd = round(
+                    result.total_estimated_cost_usd + trace.estimated_cost_usd, 6
+                )
+            except BudgetExceededError:
+                result.cost_cap_triggered = True
+                break
 
-    result.stage1_reviewed = len(verdicts_by_id)
-
-    # Mark reviewed candidates seen except manual observe fast-lane test runs
-    skip_seen_burn = bool(fast_lane_url) and mode == "observe"
-    if not skip_seen_burn:
-        for item_id, verdict in verdicts_by_id.items():
-            item = by_id[item_id]
-            if item.feed_id == "fast-lane" and mode == "observe":
-                continue
-            result.new_seen_records[item_id] = SeenRecord(
-                canonical_url=item.canonical_url,
-                title_hash=item.title_hash,
-                content_hash=item.content_hash,
-                feed_id=item.feed_id,
-                first_seen_at=run_at,
-                verdict=verdict.verdict,
+            scored = score_stage2_analysis(
+                item,
+                analysis,
+                stage_threshold=config.stage_score_threshold,
+                high_signal_threshold=config.high_signal_threshold,
             )
+            result.stage2_results.append(scored)
+            if item.item_id in result.new_seen_records:
+                result.new_seen_records[item.item_id].verdict = f"{scored.disposition}:{scored.score}"
+            if (
+                scored.disposition in ("STAGE", "HIGH_SIGNAL")
+                and scored.score >= PENDING_BUFFER_MIN_SCORE
+            ):
+                qualifying_survivors.append(scored)
 
-    survivor_verdicts = [v for v in result.stage1_verdicts if v.verdict == "SURVIVOR"][
-        : config.max_stage2_survivors
-    ]
+    if effective_coherence_gate:
+        combined_by_id: dict[str, ScoredSurvivor] = {}
+        drained_ids: list[str] = []
+        if pending is not None:
+            for item_id, pc in pending.items.items():
+                if (
+                    pc.disposition in ("STAGE", "HIGH_SIGNAL")
+                    and pc.score >= PENDING_BUFFER_MIN_SCORE
+                ):
+                    combined_by_id[item_id] = ScoredSurvivor(
+                        item=pc.item,
+                        analysis=pc.analysis,
+                        score=pc.score,
+                        disposition=pc.disposition,
+                        gate_failure_reason=pc.gate_failure_reason,
+                    )
+                    drained_ids.append(item_id)
+        for s in qualifying_survivors:
+            combined_by_id[s.item.item_id] = s
+        staged = sorted(combined_by_id.values(), key=lambda s: s.score, reverse=True)
+        result.drained_item_ids = drained_ids
+        result.staged_items = staged
+        result.buffered_items = []
+        result.has_high_signal = any(s.disposition == "HIGH_SIGNAL" for s in staged)
+    else:
+        qualifying_survivors.sort(key=lambda s: s.score, reverse=True)
+        result.buffered_items = qualifying_survivors
+        result.staged_items = []
+        result.has_high_signal = False
 
-    # Stage 2: enrich short-body survivors deterministically, then deep rubric delta
-    staged: list[ScoredSurvivor] = []
-    for sv in survivor_verdicts:
-        item = by_id[sv.item_id]
-        if offline_candidates is None:
-            item = enrich_survivor_body(item, config=config, http_get=http_get)
-            by_id[sv.item_id] = item
-            if sv.item_id in summaries_by_id:
-                summaries_by_id[sv.item_id].body_chars = len(item.body)
-                summaries_by_id[sv.item_id].word_count = len(item.body.split())
-                summaries_by_id[sv.item_id].enrichment_status = item.enrichment_status
-            if item.enrichment_status == "fetch_blocked":
-                if item.item_id in result.new_seen_records:
-                    result.new_seen_records[item.item_id].verdict = "FETCH_BLOCKED"
-                continue
-
-        target_files = [sv.matched_repo_file] if sv.matched_repo_file else []
-        target_context = load_target_repo_context(
-            config.repo_root, target_files, exclude_files=excluded
-        )
-        try:
-            analysis, trace = client.analyze_stage2_survivor(item, target_context)
-            result.traces.append(trace)
-            result.total_estimated_cost_usd = round(
-                result.total_estimated_cost_usd + trace.estimated_cost_usd, 6
-            )
-        except BudgetExceededError:
-            result.cost_cap_triggered = True
-            break
-
-        scored = score_stage2_analysis(
-            item,
-            analysis,
-            stage_threshold=config.stage_score_threshold,
-            high_signal_threshold=config.high_signal_threshold,
-        )
-        result.stage2_results.append(scored)
-        if item.item_id in result.new_seen_records:
-            result.new_seen_records[item.item_id].verdict = f"{scored.disposition}:{scored.score}"
-        if scored.disposition in ("STAGE", "HIGH_SIGNAL"):
-            staged.append(scored)
-
-    staged.sort(key=lambda s: s.score, reverse=True)
-    result.staged_items = staged
-    result.has_high_signal = any(s.disposition == "HIGH_SIGNAL" for s in staged)
     result.summary_markdown = build_job_summary_markdown(result)
     return result
 
@@ -399,18 +470,51 @@ def apply_run_result_files(
     run_result_path: Path,
     seen_path: Path,
     health_path: Path,
+    pending_path: Path | None = None,
     digest_dir: Path | None = None,
     summary_out_path: Path | None = None,
     update_state: bool = True,
 ) -> dict[str, object]:
-    """Job 2 deterministic helper: validate run-result.json, update state, and render radar/ digest."""
+    """Job 2 deterministic helper: validate run-result.json, update state/pending buffer, and render radar/ digest."""
     result = RunResult.model_validate_json(run_result_path.read_text(encoding="utf-8"))
+    effective_pending_path = pending_path or (seen_path.parent / "pending-candidates.json")
+    pending = load_pending_candidates(effective_pending_path)
+
+    if result.run_coherence_gate and not result.drained_item_ids and pending.items:
+        combined_by_id: dict[str, ScoredSurvivor] = {
+            s.item.item_id: s for s in result.staged_items
+        }
+        drained_ids: list[str] = []
+        for item_id, pc in pending.items.items():
+            if pc.disposition in ("STAGE", "HIGH_SIGNAL") and pc.score >= PENDING_BUFFER_MIN_SCORE:
+                combined_by_id.setdefault(
+                    item_id,
+                    ScoredSurvivor(
+                        item=pc.item,
+                        analysis=pc.analysis,
+                        score=pc.score,
+                        disposition=pc.disposition,
+                        gate_failure_reason=pc.gate_failure_reason,
+                    ),
+                )
+                drained_ids.append(item_id)
+        staged = sorted(combined_by_id.values(), key=lambda s: s.score, reverse=True)
+        result.drained_item_ids = drained_ids
+        result.staged_items = staged
+        result.has_high_signal = any(s.disposition == "HIGH_SIGNAL" for s in staged)
+        result.summary_markdown = build_job_summary_markdown(result)
+        run_result_path.write_text(result.model_dump_json(indent=2) + "\n", encoding="utf-8")
+
     if update_state:
         seen = load_seen_state(seen_path)
         health = load_feed_health(health_path)
         updated_seen, updated_health = apply_run_result_to_state(seen, health, result)
+        updated_pending = apply_run_result_to_pending(pending, result)
         save_seen_state(seen_path, updated_seen)
         save_feed_health(health_path, updated_health)
+        save_pending_candidates(effective_pending_path, updated_pending)
+    else:
+        updated_pending = pending
 
     if summary_out_path is not None:
         summary_out_path.parent.mkdir(parents=True, exist_ok=True)
@@ -418,7 +522,12 @@ def apply_run_result_files(
 
     digest_path: Path | None = None
     added_count = 0
-    if digest_dir is not None and result.mode == "enforce" and result.staged_items:
+    if (
+        digest_dir is not None
+        and result.mode == "enforce"
+        and result.run_coherence_gate
+        and result.staged_items
+    ):
         digest_dir.mkdir(parents=True, exist_ok=True)
         digest_path = digest_dir / f"{result.iso_week}-digest.md"
         existing = digest_path.read_text(encoding="utf-8") if digest_path.is_file() else None
@@ -433,6 +542,9 @@ def apply_run_result_files(
     return {
         "mode": result.mode,
         "iso_week": result.iso_week,
+        "run_coherence_gate": result.run_coherence_gate,
+        "buffered_count": len(result.buffered_items),
+        "pending_count": len(updated_pending.items),
         "staged_count": len(result.staged_items),
         "added_to_digest": added_count,
         "has_high_signal": result.has_high_signal,
@@ -450,17 +562,22 @@ def _cmd_inventory(args: argparse.Namespace) -> int:
 def _cmd_run(args: argparse.Namespace) -> int:
     config = PipelineConfig.from_env(Path(args.repo_root))
     seen = load_seen_state(Path(args.seen_path)) if args.seen_path else SeenState()
+    pending_arg = getattr(args, "pending_path", "")
+    pending = load_pending_candidates(Path(pending_arg)) if pending_arg else PendingCandidatesState()
     offline_candidates = None
     if args.offline_items:
         raw = json.loads(Path(args.offline_items).read_text(encoding="utf-8"))
         offline_candidates = [CandidateItem.model_validate(item) for item in raw]
 
+    gate_flag = True if getattr(args, "run_coherence_gate", False) else None
     result = run_pipeline(
         config,
         seen=seen,
+        pending=pending,
         mode=args.mode,
         fast_lane_url=args.url or None,
         force=bool(getattr(args, "force", False)),
+        run_coherence_gate=gate_flag,
         offline_candidates=offline_candidates,
         exclude_repo_files=args.withhold or [],
     )
@@ -478,10 +595,12 @@ def _cmd_run(args: argparse.Namespace) -> int:
 
 
 def _cmd_apply_state(args: argparse.Namespace) -> int:
+    pending_arg = getattr(args, "pending_path", "")
     outcome = apply_run_result_files(
         run_result_path=Path(args.run_result),
         seen_path=Path(args.seen_path),
         health_path=Path(args.health_path),
+        pending_path=Path(pending_arg) if pending_arg else None,
         digest_dir=Path(args.digest_dir) if args.digest_dir else None,
         summary_out_path=Path(args.summary_out) if args.summary_out else None,
         update_state=not args.no_update_state,
@@ -543,6 +662,11 @@ def build_parser() -> argparse.ArgumentParser:
     p_run = sub.add_parser("run", help="Run Stage 0 -> Stage 1 -> Stage 2 pipeline (read-only Job 1).")
     p_run.add_argument("--mode", choices=["observe", "enforce", "bootstrap"], default="observe")
     p_run.add_argument("--seen-path", default="", help="Path to seen.json from radar-state.")
+    p_run.add_argument(
+        "--pending-path",
+        default="",
+        help="Path to pending-candidates.json from radar-state.",
+    )
     p_run.add_argument("--output", required=True, help="Path to write validated run-result.json.")
     p_run.add_argument("--summary-out", default="", help="Optional path to write Job Summary markdown.")
     p_run.add_argument("--url", default="", help="Optional single URL for manual fast-lane triage.")
@@ -550,6 +674,11 @@ def build_parser() -> argparse.ArgumentParser:
         "--force",
         action="store_true",
         help="Bypass seen.json deduplication to force re-evaluation.",
+    )
+    p_run.add_argument(
+        "--run-coherence-gate",
+        action="store_true",
+        help="Drain pending-candidates.json through the weekly Coherence Gate.",
     )
     p_run.add_argument("--offline-items", default="", help="Optional JSON list of CandidateItems for offline runs.")
     p_run.add_argument("--withhold", action="append", default=[], help="Withhold repo files (calibration testing).")
@@ -559,6 +688,11 @@ def build_parser() -> argparse.ArgumentParser:
     p_apply.add_argument("--run-result", required=True)
     p_apply.add_argument("--seen-path", required=True)
     p_apply.add_argument("--health-path", required=True)
+    p_apply.add_argument(
+        "--pending-path",
+        default="",
+        help="Path to pending-candidates.json on radar-state.",
+    )
     p_apply.add_argument("--digest-dir", default="", help="Directory for radar/YYYY-Www-digest.md (enforce mode).")
     p_apply.add_argument("--summary-out", default="", help="Regenerate sanitized summary markdown in Job 2.")
     p_apply.add_argument("--no-update-state", action="store_true", help="Render digest without re-applying state counters.")

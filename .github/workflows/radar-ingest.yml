@@ -32,6 +32,11 @@ on:
         type: boolean
         required: false
         default: false
+      run_coherence_gate:
+        description: "Drain pending-candidates.json through the weekly Coherence Gate"
+        type: boolean
+        required: false
+        default: false
 
 concurrency:
   group: radar-pipeline
@@ -48,11 +53,12 @@ jobs:
       - name: Checkout main (read-only)
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      - name: Fetch existing radar-state/seen.json (read-only)
+      - name: Fetch existing radar-state/seen.json and pending-candidates.json (read-only)
         run: |
           mkdir -p /tmp/radar-state-read
           if git fetch --depth=1 origin radar-state 2>/dev/null; then
             git show FETCH_HEAD:seen.json > /tmp/radar-state-read/seen.json 2>/dev/null || true
+            git show FETCH_HEAD:pending-candidates.json > /tmp/radar-state-read/pending-candidates.json 2>/dev/null || true
           fi
 
       - name: Set up uv
@@ -73,6 +79,8 @@ jobs:
           RADAR_MODE_EFFECTIVE: ${{ github.event_name == 'workflow_dispatch' && inputs.mode || vars.RADAR_MODE || 'observe' }}
           FAST_LANE_URL: ${{ github.event_name == 'workflow_dispatch' && inputs.fast_lane_url || '' }}
           RADAR_FORCE: ${{ github.event_name == 'workflow_dispatch' && inputs.force && 'true' || 'false' }}
+          RADAR_RUN_COHERENCE_GATE: ${{ github.event_name == 'workflow_dispatch' && inputs.run_coherence_gate && 'true' || 'false' }}
+          GITHUB_EVENT_NAME_EFFECTIVE: ${{ github.event_name }}
         run: |
           mkdir -p .radar-out
           CMD=(uv run python -m scripts.radar.cli run
@@ -82,11 +90,17 @@ jobs:
           if [ -f /tmp/radar-state-read/seen.json ]; then
             CMD+=(--seen-path /tmp/radar-state-read/seen.json)
           fi
+          if [ -f /tmp/radar-state-read/pending-candidates.json ]; then
+            CMD+=(--pending-path /tmp/radar-state-read/pending-candidates.json)
+          fi
           if [ -n "$FAST_LANE_URL" ]; then
             CMD+=(--url "$FAST_LANE_URL")
           fi
           if [ "$RADAR_FORCE" = "true" ]; then
             CMD+=(--force)
+          fi
+          if [ "$RADAR_RUN_COHERENCE_GATE" = "true" ] || { [ "$GITHUB_EVENT_NAME_EFFECTIVE" = "schedule" ] && [ "$(date -u +%u)" = "7" ]; }; then
+            CMD+=(--run-coherence-gate)
           fi
           set +e
           "${CMD[@]}"
@@ -149,10 +163,13 @@ jobs:
             --run-result .radar-out/run-result.json \
             --seen-path /tmp/radar-state-wt/seen.json \
             --health-path /tmp/radar-state-wt/feed-health.json \
+            --pending-path /tmp/radar-state-wt/pending-candidates.json \
             --summary-out /tmp/radar-pr-body.md)
           echo "$OUT_JSON"
           echo "mode=$(echo "$OUT_JSON" | python3 -c 'import json,sys; print(json.load(sys.stdin)["mode"])')" >> "$GITHUB_OUTPUT"
           echo "iso_week=$(echo "$OUT_JSON" | python3 -c 'import json,sys; print(json.load(sys.stdin)["iso_week"])')" >> "$GITHUB_OUTPUT"
+          echo "run_coherence_gate=$(echo "$OUT_JSON" | python3 -c 'import json,sys; print(str(json.load(sys.stdin)["run_coherence_gate"]).lower())')" >> "$GITHUB_OUTPUT"
+          echo "buffered_count=$(echo "$OUT_JSON" | python3 -c 'import json,sys; print(json.load(sys.stdin)["buffered_count"])')" >> "$GITHUB_OUTPUT"
           echo "staged_count=$(echo "$OUT_JSON" | python3 -c 'import json,sys; print(json.load(sys.stdin)["staged_count"])')" >> "$GITHUB_OUTPUT"
           echo "has_high_signal=$(echo "$OUT_JSON" | python3 -c 'import json,sys; print(str(json.load(sys.stdin)["has_high_signal"]).lower())')" >> "$GITHUB_OUTPUT"
 
@@ -169,14 +186,14 @@ jobs:
         run: |
           git -C /tmp/radar-state-wt config user.name "github-actions[bot]"
           git -C /tmp/radar-state-wt config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git -C /tmp/radar-state-wt add seen.json feed-health.json feed-health-report.md
+          git -C /tmp/radar-state-wt add seen.json feed-health.json pending-candidates.json feed-health-report.md
           if ! git -C /tmp/radar-state-wt diff --cached --quiet; then
-            git -C /tmp/radar-state-wt commit -m "chore(radar-state): update seen and feed telemetry"
+            git -C /tmp/radar-state-wt commit -m "chore(radar-state): update seen, pending buffer, and feed telemetry"
             git -C /tmp/radar-state-wt push origin radar-state
           fi
 
-      - name: Stage rolling weekly Draft PR (enforce mode & >=1 survivor only)
-        if: steps.apply.outputs.mode == 'enforce' && steps.apply.outputs.staged_count != '0'
+      - name: Stage rolling weekly Draft PR (enforce mode, weekly gate, & >=1 survivor only)
+        if: steps.apply.outputs.mode == 'enforce' && steps.apply.outputs.run_coherence_gate == 'true' && steps.apply.outputs.staged_count != '0'
         env:
           GH_TOKEN: ${{ github.token }}
           ISO_WEEK: ${{ steps.apply.outputs.iso_week }}
@@ -204,6 +221,7 @@ jobs:
             --run-result .radar-out/run-result.json \
             --seen-path /tmp/radar-state-wt/seen.json \
             --health-path /tmp/radar-state-wt/feed-health.json \
+            --pending-path /tmp/radar-state-wt/pending-candidates.json \
             --digest-dir radar \
             --no-update-state
 
