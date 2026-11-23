@@ -65,6 +65,13 @@ Goal: catch leading-edge agentic engineering shifts within ~24h without X-scroll
 - [x] Implement automated PR merge/close telemetry reconciliation and quarterly prune/≥2-hit promotion report generation ([`scripts/radar/reconcile_prs.py`](scripts/radar/reconcile_prs.py), [`scripts/radar/state.py`](scripts/radar/state.py)).
 - [ ] Review first quarterly `feed-health-report.md` on `radar-state` and prune/promote sources manually in `radar/feeds.yaml`.
 
+### Phase 5 — Weekly Coherence Gate (`gemini-4-neon`) & Fail-Closed Fast-Lane (`[C]`, `[G]`)
+Spec & vertical tickets: [`docs/specs/coherence-gate-and-fast-lane.md`](docs/specs/coherence-gate-and-fast-lane.md) · [`docs/adr/0001-coherence-gate-and-fast-lane.md`](docs/adr/0001-coherence-gate-and-fast-lane.md) · [`docs/GLOSSARY.md`](docs/GLOSSARY.md).
+- [ ] **Ticket 1:** Fast-Lane Plan B resolution, `FETCH_INCOMPLETE` fail-closed gate, `force` / non-burning `observe` fast-lane, and rich GitHub Actions Job Summary tables.
+- [ ] **Ticket 2:** Mon–Sat holding buffer (`radar-state/pending-candidates.json`) decoupling daily sweeps from Sunday weekly gate runs.
+- [ ] **Ticket 3:** Stage 3 `gemini-4-neon` (`HIGH`) full-repo Coherence Gate (score-blind de-anchoring, 6 Systemic Poison checks, zero-PR default + `weekly-audits.md`, fast-lane Stage 1 bypass).
+- [ ] **Future consideration (if needed):** If Plan B repeatedly fails (`FETCH_INCOMPLETE`) on paywalled or X-Article links, add an Antigravity local browser/CLI fallback (`$0` marginal API spend using Google AI Pro/Ultra sub) that evaluates logged-in page text locally against the Coherence Gate.
+
 ---
 
 ## 4. Research Angles by Career Track
