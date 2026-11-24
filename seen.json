@@ -8,12 +8,28 @@
       "title_hash": "e0316969a3bf",
       "verdict": "ALREADY_COVERED"
     },
+    "02e27935986c": {
+      "canonical_url": "https://michaelharley.net/posts/2026/11/01/llm-agents-work-for-their-parent-companies-not-for-you",
+      "content_hash": "",
+      "feed_id": "hn-agentic",
+      "first_seen_at": "2026-11-24T17:19:24.307049+00:00",
+      "title_hash": "abf680f31a64",
+      "verdict": "MARKETING_REBRAND"
+    },
     "06d2d06f2b70": {
       "canonical_url": "https://www.pandex.io/",
       "content_hash": "",
       "feed_id": "hn-agentic",
       "first_seen_at": "2026-11-22T20:14:25.223071+00:00",
       "title_hash": "7f617330f15f",
+      "verdict": "NO_WORKFLOW_DELTA"
+    },
+    "07fffdf07c77": {
+      "canonical_url": "https://simonwillison.net/2026/Nov/24/datasette-charts",
+      "content_hash": "c93cb8c135f7",
+      "feed_id": "simon-willison",
+      "first_seen_at": "2026-11-24T17:19:24.307049+00:00",
+      "title_hash": "a910b96ac293",
       "verdict": "NO_WORKFLOW_DELTA"
     },
     "0e9fb0eb84f1": {
@@ -23,6 +39,22 @@
       "first_seen_at": "2026-11-21T04:33:41.263719+00:00",
       "title_hash": "3ba798a4e26d",
       "verdict": "BOOTSTRAP_SEEDED"
+    },
+    "105d2dd6f5d6": {
+      "canonical_url": "https://simonwillison.net/2026/Nov/23/glm-54",
+      "content_hash": "3cb62aa0cadf",
+      "feed_id": "simon-willison",
+      "first_seen_at": "2026-11-24T17:19:24.307049+00:00",
+      "title_hash": "a34ac2c2c8b2",
+      "verdict": "MODEL_RELEASE_FLUFF"
+    },
+    "1259b534687d": {
+      "canonical_url": "https://openai.com/business/customer-stories/richpanel-ai-customer-support",
+      "content_hash": "87f5bcd65a77",
+      "feed_id": "openai-news",
+      "first_seen_at": "2026-11-24T17:19:24.307049+00:00",
+      "title_hash": "bfd2db086be4",
+      "verdict": "MODEL_RELEASE_FLUFF"
     },
     "1590e3f63876": {
       "canonical_url": "https://github.com/anthropics/claude-code/releases/tag/v2.1.328",
@@ -96,6 +128,14 @@
       "title_hash": "3b46fb884626",
       "verdict": "BOOTSTRAP_SEEDED"
     },
+    "3d5981388f51": {
+      "canonical_url": "https://simonwillison.net/2026/Nov/24/datasette-agent",
+      "content_hash": "a530377d80c0",
+      "feed_id": "simon-willison",
+      "first_seen_at": "2026-11-24T17:19:24.307049+00:00",
+      "title_hash": "146796c8001e",
+      "verdict": "NO_WORKFLOW_DELTA"
+    },
     "3f7f7cffebe4": {
       "canonical_url": "https://simonwillison.net/2026/Nov/20/token-fraud-is-here-and-its-bad",
       "content_hash": "6222b4439f52",
@@ -103,6 +143,14 @@
       "first_seen_at": "2026-11-21T04:33:41.263719+00:00",
       "title_hash": "2ee6fd9a5481",
       "verdict": "BOOTSTRAP_SEEDED"
+    },
+    "470a905d1d5d": {
+      "canonical_url": "https://github.com/openai/codex/releases/tag/rust-v0.172.0-alpha.2.1",
+      "content_hash": "",
+      "feed_id": "openai-codex-releases",
+      "first_seen_at": "2026-11-24T17:19:24.307049+00:00",
+      "title_hash": "11dacd1658fe",
+      "verdict": "MODEL_RELEASE_FLUFF"
     },
     "4cc1e304d768": {
       "canonical_url": "https://github.blog/changelog/2026-11-17-monitor-github-copilot-activity-through-microsoft-agent-365",
@@ -136,6 +184,14 @@
       "title_hash": "8f955b1d1b05",
       "verdict": "NO_WORKFLOW_DELTA"
     },
+    "5fdd743e62a3": {
+      "canonical_url": "https://github.com/openai/codex/releases/tag/rust-v0.173.0-alpha.5",
+      "content_hash": "",
+      "feed_id": "openai-codex-releases",
+      "first_seen_at": "2026-11-24T17:19:24.307049+00:00",
+      "title_hash": "af17b59cc66b",
+      "verdict": "MODEL_RELEASE_FLUFF"
+    },
     "6b2d356ac9f7": {
       "canonical_url": "https://simonwillison.net/2026/Nov/18/datasette-arrows",
       "content_hash": "9d45cc45160b",
@@ -168,6 +224,14 @@
       "title_hash": "7dc58de858db",
       "verdict": "BOOTSTRAP_SEEDED"
     },
+    "7eea171611f3": {
+      "canonical_url": "https://simonwillison.net/2026/Nov/24/astra-historical-mystery",
+      "content_hash": "337cbb0e75bc",
+      "feed_id": "simon-willison",
+      "first_seen_at": "2026-11-24T17:19:24.307049+00:00",
+      "title_hash": "ea6b100f519c",
+      "verdict": "MARKETING_REBRAND"
+    },
     "8145fefb47ff": {
       "canonical_url": "https://openai.com/business/customer-stories/hebbia",
       "content_hash": "62bb79629dc5",
@@ -175,6 +239,14 @@
       "first_seen_at": "2026-11-21T05:01:36.109769+00:00",
       "title_hash": "c4ed2a1d9d05",
       "verdict": "BOOTSTRAP_SEEDED"
+    },
+    "824283cf95f0": {
+      "canonical_url": "https://github.com/openai/codex/releases/tag/rust-v0.172.0",
+      "content_hash": "063d4c812fbe",
+      "feed_id": "openai-codex-releases",
+      "first_seen_at": "2026-11-24T17:19:24.307049+00:00",
+      "title_hash": "76a88947d1c9",
+      "verdict": "ALREADY_COVERED"
     },
     "82b169450b02": {
       "canonical_url": "https://simonwillison.net/2026/Nov/17/gpt62-astra-and-sol",
@@ -200,6 +272,22 @@
       "title_hash": "a600aade8617",
       "verdict": "BOOTSTRAP_SEEDED"
     },
+    "895b540db6a8": {
+      "canonical_url": "https://deepmind.google/blog/finding-faster-quantum-algorithms-with-agents-and-formal-verification",
+      "content_hash": "",
+      "feed_id": "google-deepmind-blog",
+      "first_seen_at": "2026-11-24T17:19:24.307049+00:00",
+      "title_hash": "7d0f71154fe4",
+      "verdict": "NO_WORKFLOW_DELTA"
+    },
+    "8a62ea05f675": {
+      "canonical_url": "https://simonwillison.net/2026/Nov/23/datasette-charts",
+      "content_hash": "7fcbe9bb6968",
+      "feed_id": "simon-willison",
+      "first_seen_at": "2026-11-24T17:19:24.307049+00:00",
+      "title_hash": "a0f19ed07f3e",
+      "verdict": "NO_WORKFLOW_DELTA"
+    },
     "8c4432adfe17": {
       "canonical_url": "https://simonwillison.net/2026/Nov/18/llm-gemini",
       "content_hash": "51cc9dd54f5c",
@@ -224,6 +312,14 @@
       "title_hash": "b494b79eeff0",
       "verdict": "BOOTSTRAP_SEEDED"
     },
+    "9281e402e80e": {
+      "canonical_url": "https://github.com/openai/codex/releases/tag/rust-v0.171.0-alpha.13.2",
+      "content_hash": "",
+      "feed_id": "openai-codex-releases",
+      "first_seen_at": "2026-11-24T17:19:24.307049+00:00",
+      "title_hash": "b559ec16ff6d",
+      "verdict": "MODEL_RELEASE_FLUFF"
+    },
     "9291232aee04": {
       "canonical_url": "https://github.com/openai/codex/releases/tag/rust-v0.173.0-alpha.2",
       "content_hash": "",
@@ -240,6 +336,14 @@
       "title_hash": "1ee26324e5d4",
       "verdict": "BOOTSTRAP_SEEDED"
     },
+    "981d6178a1cb": {
+      "canonical_url": "https://simonwillison.net/2026/Nov/23/ladybird",
+      "content_hash": "9f3114b4a7cf",
+      "feed_id": "simon-willison",
+      "first_seen_at": "2026-11-24T17:19:24.307049+00:00",
+      "title_hash": "38e130ceedc6",
+      "verdict": "NO_WORKFLOW_DELTA"
+    },
     "9e90f9c09471": {
       "canonical_url": "https://github.com/gulivan/worker755",
       "content_hash": "",
@@ -255,6 +359,14 @@
       "first_seen_at": "2026-11-21T04:33:41.263719+00:00",
       "title_hash": "4e4e7595d566",
       "verdict": "BOOTSTRAP_SEEDED"
+    },
+    "a9972b90c90a": {
+      "canonical_url": "https://github.com/anthropics/claude-code/releases/tag/v2.1.331",
+      "content_hash": "cbe875f148e3",
+      "feed_id": "claude-code-releases",
+      "first_seen_at": "2026-11-24T17:19:24.307049+00:00",
+      "title_hash": "4d7f90ac6413",
+      "verdict": "ALREADY_COVERED"
     },
     "ace31f3b0bb1": {
       "canonical_url": "https://github.com/anthropics/claude-code/releases/tag/v2.1.321",
@@ -288,6 +400,14 @@
       "title_hash": "67e152403a4d",
       "verdict": "BOOTSTRAP_SEEDED"
     },
+    "e2c2e0af508d": {
+      "canonical_url": "https://github.com/openai/codex/releases/tag/rust-v0.174.0-alpha.2",
+      "content_hash": "",
+      "feed_id": "openai-codex-releases",
+      "first_seen_at": "2026-11-24T17:19:24.307049+00:00",
+      "title_hash": "f0c7f0b68394",
+      "verdict": "MODEL_RELEASE_FLUFF"
+    },
     "e45fd791e1fe": {
       "canonical_url": "https://simonwillison.net/2026/Nov/17/external-sandboxes-for-coding-agents",
       "content_hash": "b0442b55c48d",
@@ -303,6 +423,14 @@
       "first_seen_at": "2026-11-21T04:33:41.263719+00:00",
       "title_hash": "c78249daf6b2",
       "verdict": "BOOTSTRAP_SEEDED"
+    },
+    "efe8350e6f16": {
+      "canonical_url": "https://github.com/openai/codex/releases/tag/rust-v0.174.0-alpha.1",
+      "content_hash": "",
+      "feed_id": "openai-codex-releases",
+      "first_seen_at": "2026-11-24T17:19:24.307049+00:00",
+      "title_hash": "3dccbaa84f11",
+      "verdict": "MODEL_RELEASE_FLUFF"
     },
     "f3d370a5121a": {
       "canonical_url": "https://github.com/anthropics/claude-code/releases/tag/v2.1.329",
@@ -338,5 +466,5 @@
     }
   },
   "schema_version": 1,
-  "updated_at": "2026-11-22T22:23:52.653980+00:00"
+  "updated_at": "2026-11-24T17:19:24.307049+00:00"
 }
