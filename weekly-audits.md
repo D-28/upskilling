@@ -38,3 +38,15 @@ Append-only log of Stage 3 (`gemini-4-neon`, `HIGH`) systemic coherence decision
 | `1fdab550328d` | Uber Engineering — Where the Digital World Meets the Physical One | `REJECT_ENTROPY` | `attention_budget_poison` | `-` | `playbooks/programmatic-tooling-mcp.md, playbooks/model-effort-economics.md` | This page is a landing directory containing job postings, marketing copy, and two-sentence post summaries. Mentions of MCP Gateway, Code Mode, and prompt caching lack concrete architecture details or failure modes. Existing playbooks already cover Code Mode, MCP gateways, and cache hygiene in greater depth. Adopting claims from teaser blurbs triggers attention budget poison without sharpening any repository invariant. |
 
 ---
+
+<!-- radar-audit: 2026-W48 run_at: 2026-11-24T16:14:24.446419+00:00 -->
+## 2026-W48 — `REJECT_ALL` (2026-11-24)
+
+- **Run Timestamp:** `2026-11-24T16:14:24.446419+00:00` · **Mode:** `observe` · **Route:** `fast-lane`
+- **Executive Summary:** Stage 3 rejects the single fast-lane candidate and approves zero syntheses. The T3 Code tutorial adds heavy multi-agent orchestration tax and relies on prompt-only guardrails. It also promotes self-judged goals and conflicts with existing playbooks and ADR-0001.
+
+| Item ID | Title | Verdict | Systemic Poisons | Related IDs | Affected Files | Rationale |
+|---|---|---|---|---|---|---|
+| `5cb0b0021d6c` | Codez on X: "T3 Code: build ai agent teams with all frontier models (Full-Course)" / X | `REJECT_ENTROPY` | `attention_budget_poison, prompt_wish_poison, verification_weakening_poison, orchestration_tax_poison, cross_file_disharmony` | `-` | `playbooks/harness-loop-graph.md, playbooks/verification-engineering.md, playbooks/programmatic-tooling-mcp.md, templates/AGENTS.md.template, docs/adr/0001-coherence-gate-and-fast-lane.md` | This T3 Code tutorial triggers five Systemic Poisons. It mandates a five-agent team on every project instead of proving one loop first. It enforces read-only review and file fences through prompt wishes rather than hooks or sandboxes. Its /goal command lets agents self-judge completion. Adding TEAM.md and exposing a laptop MCP server to a cloud bot also contradicts existing playbooks and ADR-0001. |
+
+---
