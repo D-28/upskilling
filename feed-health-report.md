@@ -1,6 +1,6 @@
 # Radar Feed Health & Pruning Report
 
-- **Generated:** `2026-11-24T03:38:22.314357+00:00`
+- **Generated:** `2026-11-24T15:53:18.042982+00:00`
 - **Evaluation Window:** Last `90` days
 
 ## Per-Feed Telemetry
