@@ -9,6 +9,7 @@ from __future__ import annotations
 import json
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from typing import Any
 
 from scripts.radar.config import MAX_SEEN_ITEMS
 from scripts.radar.fetcher import extract_domain
@@ -27,12 +28,27 @@ from scripts.radar.rubric import approved_stage3_item_ids
 from scripts.radar.security import filter_allowed_repo_paths, redact_secrets, sanitize_single_line
 
 
-def load_seen_state(path: Path) -> SeenState:
-    """Load seen.json safely with backward-compatible defaults when absent."""
+def _load_json_dict(path: Path) -> dict[str, Any]:
+    """Load a JSON object from `path`, returning `{}` when absent or 0-byte/whitespace-only."""
     if not path.is_file():
-        return SeenState()
-    raw = json.loads(path.read_text(encoding="utf-8"))
-    return SeenState.model_validate(raw or {})
+        return {}
+    text = path.read_text(encoding="utf-8").strip()
+    if not text:
+        return {}
+    try:
+        raw = json.loads(text)
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"Invalid JSON in state file {path}: {exc}") from exc
+    if raw is None:
+        return {}
+    if not isinstance(raw, dict):
+        raise ValueError(f"Expected JSON object in state file {path}, got {type(raw).__name__}")
+    return raw
+
+
+def load_seen_state(path: Path) -> SeenState:
+    """Load seen.json safely with backward-compatible defaults when absent or empty."""
+    return SeenState.model_validate(_load_json_dict(path))
 
 
 def save_seen_state(path: Path, state: SeenState) -> None:
@@ -45,11 +61,8 @@ def save_seen_state(path: Path, state: SeenState) -> None:
 
 
 def load_feed_health(path: Path) -> FeedHealthState:
-    """Load feed-health.json safely with backward-compatible defaults when absent."""
-    if not path.is_file():
-        return FeedHealthState()
-    raw = json.loads(path.read_text(encoding="utf-8"))
-    return FeedHealthState.model_validate(raw or {})
+    """Load feed-health.json safely with backward-compatible defaults when absent or empty."""
+    return FeedHealthState.model_validate(_load_json_dict(path))
 
 
 def save_feed_health(path: Path, state: FeedHealthState) -> None:
@@ -62,14 +75,8 @@ def save_feed_health(path: Path, state: FeedHealthState) -> None:
 
 
 def load_pending_candidates(path: Path) -> PendingCandidatesState:
-    """Load pending-candidates.json safely with backward-compatible empty defaults when absent."""
-    if not path.is_file():
-        return PendingCandidatesState()
-    text = path.read_text(encoding="utf-8").strip()
-    if not text:
-        return PendingCandidatesState()
-    raw = json.loads(text)
-    return PendingCandidatesState.model_validate(raw or {})
+    """Load pending-candidates.json safely with backward-compatible empty defaults when absent or empty."""
+    return PendingCandidatesState.model_validate(_load_json_dict(path))
 
 
 def save_pending_candidates(path: Path, state: PendingCandidatesState) -> None:
@@ -85,14 +92,23 @@ def apply_run_result_to_pending(
     pending: PendingCandidatesState,
     result: RunResult,
 ) -> PendingCandidatesState:
-    """Buffer Mon-Sat survivors (`>= 7/10`) or clear the buffer after a weekly Coherence Gate run."""
+    """Buffer Mon-Sat survivors (`>= 7/10`) or clear the buffer after a completed weekly Coherence Gate run."""
     updated = pending.model_copy(deep=True)
-    if result.status == "FETCH_INCOMPLETE" or result.mode == "bootstrap":
+    if result.status in ("FETCH_INCOMPLETE", "FAILED") or result.mode == "bootstrap":
         return updated
     if bool(result.fast_lane_url) and result.mode == "observe":
         return updated
 
-    if result.run_coherence_gate:
+    stage3_errored = any(err.stage == "stage3" for err in result.stage_errors)
+    gate_completed = result.run_coherence_gate and (
+        result.coherence_gate_completed
+        or (
+            result.stage3_verdict is not None
+            and not result.cost_cap_triggered
+            and not stage3_errored
+        )
+    )
+    if gate_completed:
         updated.items.clear()
         updated.updated_at = result.run_at
         return updated
@@ -127,7 +143,7 @@ def apply_run_result_to_state(
     updated_seen = seen.model_copy(deep=True)
     updated_health = health.model_copy(deep=True)
 
-    skip_seen_burn = result.status == "FETCH_INCOMPLETE" or (
+    skip_seen_burn = result.status in ("FETCH_INCOMPLETE", "FAILED") or (
         bool(result.fast_lane_url) and result.mode == "observe"
     )
     if not skip_seen_burn:

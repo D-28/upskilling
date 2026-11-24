@@ -47,6 +47,7 @@ permissions: {}
 jobs:
   ingest-and-triage:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     permissions:
       contents: read
     steps:
@@ -57,8 +58,13 @@ jobs:
         run: |
           mkdir -p /tmp/radar-state-read
           if git fetch --depth=1 origin radar-state 2>/dev/null; then
-            git show FETCH_HEAD:seen.json > /tmp/radar-state-read/seen.json 2>/dev/null || true
-            git show FETCH_HEAD:pending-candidates.json > /tmp/radar-state-read/pending-candidates.json 2>/dev/null || true
+            for f in seen.json pending-candidates.json; do
+              if git show "FETCH_HEAD:${f}" > "/tmp/radar-state-read/${f}.tmp" 2>/dev/null; then
+                mv "/tmp/radar-state-read/${f}.tmp" "/tmp/radar-state-read/${f}"
+              else
+                rm -f "/tmp/radar-state-read/${f}.tmp"
+              fi
+            done
           fi
 
       - name: Set up uv
@@ -89,10 +95,10 @@ jobs:
             --mode "$RADAR_MODE_EFFECTIVE"
             --output .radar-out/run-result.json
             --summary-out .radar-out/summary.md)
-          if [ -f /tmp/radar-state-read/seen.json ]; then
+          if [ -s /tmp/radar-state-read/seen.json ]; then
             CMD+=(--seen-path /tmp/radar-state-read/seen.json)
           fi
-          if [ -f /tmp/radar-state-read/pending-candidates.json ]; then
+          if [ -s /tmp/radar-state-read/pending-candidates.json ]; then
             CMD+=(--pending-path /tmp/radar-state-read/pending-candidates.json)
           fi
           if [ -n "$FAST_LANE_URL" ]; then
@@ -103,6 +109,8 @@ jobs:
           fi
           if [ "$RADAR_RUN_COHERENCE_GATE" = "true" ] || { [ "$GITHUB_EVENT_NAME_EFFECTIVE" = "schedule" ] && [ "$(date -u +%u)" = "7" ]; }; then
             CMD+=(--run-coherence-gate)
+          elif [ "$GITHUB_EVENT_NAME_EFFECTIVE" = "workflow_dispatch" ]; then
+            CMD+=(--no-run-coherence-gate)
           fi
           set +e
           "${CMD[@]}"
@@ -119,10 +127,12 @@ jobs:
           name: radar-run-result
           path: .radar-out/run-result.json
           retention-days: 7
+          if-no-files-found: error
 
   stage-and-persist:
     needs: ingest-and-triage
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     permissions:
       contents: write
       pull-requests: write
@@ -161,21 +171,14 @@ jobs:
       - name: Apply validated run-result to radar-state (and compute staging need)
         id: apply
         run: |
-          OUT_JSON=$(uv run python -m scripts.radar.cli apply-state \
+          uv run python -m scripts.radar.cli apply-state \
             --run-result .radar-out/run-result.json \
             --seen-path /tmp/radar-state-wt/seen.json \
             --health-path /tmp/radar-state-wt/feed-health.json \
             --pending-path /tmp/radar-state-wt/pending-candidates.json \
             --audits-path /tmp/radar-state-wt/weekly-audits.md \
-            --summary-out /tmp/radar-pr-body.md)
-          echo "$OUT_JSON"
-          echo "mode=$(echo "$OUT_JSON" | python3 -c 'import json,sys; print(json.load(sys.stdin)["mode"])')" >> "$GITHUB_OUTPUT"
-          echo "iso_week=$(echo "$OUT_JSON" | python3 -c 'import json,sys; print(json.load(sys.stdin)["iso_week"])')" >> "$GITHUB_OUTPUT"
-          echo "run_coherence_gate=$(echo "$OUT_JSON" | python3 -c 'import json,sys; print(str(json.load(sys.stdin)["run_coherence_gate"]).lower())')" >> "$GITHUB_OUTPUT"
-          echo "stage3_decision=$(echo "$OUT_JSON" | python3 -c 'import json,sys; print(json.load(sys.stdin)["stage3_decision"])')" >> "$GITHUB_OUTPUT"
-          echo "buffered_count=$(echo "$OUT_JSON" | python3 -c 'import json,sys; print(json.load(sys.stdin)["buffered_count"])')" >> "$GITHUB_OUTPUT"
-          echo "staged_count=$(echo "$OUT_JSON" | python3 -c 'import json,sys; print(json.load(sys.stdin)["staged_count"])')" >> "$GITHUB_OUTPUT"
-          echo "has_high_signal=$(echo "$OUT_JSON" | python3 -c 'import json,sys; print(str(json.load(sys.stdin)["has_high_signal"]).lower())')" >> "$GITHUB_OUTPUT"
+            --summary-out /tmp/radar-pr-body.md \
+            --github-output "$GITHUB_OUTPUT"
 
       - name: Reconcile merged/closed weekly PR telemetry and render current health report
         env:
@@ -184,7 +187,8 @@ jobs:
           uv run python -m scripts.radar.reconcile_prs reconcile \
             --repo-root . \
             --health-path /tmp/radar-state-wt/feed-health.json \
-            --report-out /tmp/radar-state-wt/feed-health-report.md
+            --report-out /tmp/radar-state-wt/feed-health-report.md \
+            --allow-gh-failure
 
       - name: Persist updated state to orphan radar-state branch
         run: |
@@ -206,9 +210,11 @@ jobs:
           ISO_WEEK: ${{ steps.apply.outputs.iso_week }}
           HAS_HIGH_SIGNAL: ${{ steps.apply.outputs.has_high_signal }}
         run: |
-          BRANCH_INFO=$(uv run python -m scripts.radar.reconcile_prs choose-branch --iso-week "$ISO_WEEK")
-          BRANCH=$(echo "$BRANCH_INFO" | python3 -c 'import json,sys; print(json.load(sys.stdin)["branch"])')
-          HAS_OPEN_PR=$(echo "$BRANCH_INFO" | python3 -c 'import json,sys; print(str(json.load(sys.stdin)["has_open_pr"]).lower())')
+          uv run python -m scripts.radar.reconcile_prs choose-branch \
+            --iso-week "$ISO_WEEK" \
+            --output-file /tmp/radar-branch-info.json
+          BRANCH=$(python3 -c 'import json; print(json.load(open("/tmp/radar-branch-info.json"))["branch"])')
+          HAS_OPEN_PR=$(python3 -c 'import json; print(str(json.load(open("/tmp/radar-branch-info.json"))["has_open_pr"]).lower())')
 
           # Harness Wall 1: verify target branch is strictly a radar/weekly-* branch (never main)
           if [[ ! "$BRANCH" =~ ^radar/weekly-20[0-9]{2}-W[0-5][0-9](-[0-9]+)?$ ]]; then
@@ -234,7 +240,7 @@ jobs:
             --no-update-state
 
           # Harness Wall 2: assert ONLY radar/*.md files were modified
-          CHANGED=$(git status --porcelain)
+          CHANGED=$(git status --porcelain -uall)
           if [ -z "$CHANGED" ]; then
             echo "No net-new digest entries to commit."
             exit 0
