@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 import re
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -408,3 +409,31 @@ def test_converts_managed_copy_back_to_symlink_and_leaves_no_temp_dirs(tmp_path:
         assert link_path.is_symlink()
         assert link_path.resolve() == (SKILLS_DIR / skill).resolve()
 
+
+def test_bundled_ste_lint_script_installed_and_runnable(tmp_path: Path) -> None:
+    fake_home = tmp_path / "home"
+    fake_home.mkdir()
+    other_repo = tmp_path / "other-repo"
+    other_repo.mkdir()
+    sample_doc = other_repo / "AGENTS.md"
+    sample_doc.write_text("# Rules\n\n1. Run the tests.\n", encoding="utf-8")
+
+    # Verify bundled linter works from an external repo in both symlink and --copy modes
+    for mode_args in (("--tool", "copilot"), ("--copy", "--tool", "claude")):
+        res = run_installer(*mode_args, home=fake_home)
+        assert res.returncode == 0, res.stderr
+
+    for skill_root in (
+        fake_home / ".copilot" / "skills" / "ste-clarity",
+        fake_home / ".claude" / "skills" / "ste-clarity",
+    ):
+        linter = skill_root / "scripts" / "ste_lint.py"
+        assert linter.is_file()
+        lint_res = subprocess.run(
+            [sys.executable, str(linter), "--stats", "--check", "--strict-20", str(sample_doc)],
+            cwd=str(other_repo),
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+        assert lint_res.returncode == 0, lint_res.stderr

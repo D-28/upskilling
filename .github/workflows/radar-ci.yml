@@ -43,7 +43,7 @@ jobs:
         run: uv sync
 
       - name: Lint Python with ruff
-        run: uv run ruff check scripts tests
+        run: uv run ruff check scripts tests skills
 
       - name: Enforce STE-80 instruction grammar (Write It Twice)
         # Strict <=20w on imperative instructions; descriptive <=25w on docs/templates.
