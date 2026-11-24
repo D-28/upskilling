@@ -392,6 +392,7 @@ def test_parse_hn_algolia_handles_malformed_json_shapes_and_non_numeric_points()
             "hits": [
                 "not-a-dict",
                 {"title": "Bad points string", "url": "https://example.dev/a", "points": "N/A"},
+                {"title": "Inf points string", "url": "https://example.dev/inf", "points": "inf"},
                 {"title": "Good float points", "url": "https://example.dev/b", "points": "42.0"},
             ]
         }

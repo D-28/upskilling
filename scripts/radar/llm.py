@@ -185,21 +185,31 @@ def _extract_json_text(raw_text: str) -> str:
     return cleaned
 
 
-def _extract_finish_reason(response: Any) -> str:
-    """Safely read normalized `candidates[0].finish_reason` from a Gemini response."""
-    candidates = getattr(response, "candidates", None) or []
-    if not candidates:
+def _normalize_enum_name(raw_val: Any) -> str:
+    if raw_val is None:
         return ""
-    raw_reason = getattr(candidates[0], "finish_reason", None)
-    if raw_reason is None:
-        return ""
-    name = getattr(raw_reason, "name", None)
+    name = getattr(raw_val, "name", None)
     if isinstance(name, str) and name:
         return name.upper()
-    text = str(raw_reason).strip()
+    text = str(raw_val).strip()
     if "." in text:
         text = text.rsplit(".", 1)[-1]
     return text.upper()
+
+
+def _extract_finish_reason(response: Any) -> str:
+    """Safely read normalized `candidates[0].finish_reason` or `prompt_feedback.block_reason`."""
+    candidates = getattr(response, "candidates", None) or []
+    if candidates:
+        reason = _normalize_enum_name(getattr(candidates[0], "finish_reason", None))
+        if reason:
+            return reason
+    prompt_feedback = getattr(response, "prompt_feedback", None)
+    if prompt_feedback is not None:
+        block_reason = _normalize_enum_name(getattr(prompt_feedback, "block_reason", None))
+        if block_reason and block_reason != "BLOCK_REASON_UNSPECIFIED":
+            return block_reason
+    return ""
 
 
 def _truncate_prose(text: str, max_len: int) -> str:
@@ -514,6 +524,10 @@ class GeminiRadarClient:
         client = self._get_client(api_version)
         current_max_tokens = max_output_tokens
         call_cost_usd = 0.0
+        total_prompt_tokens = 0
+        total_cached_tokens = 0
+        total_output_tokens = 0
+        total_thought_tokens = 0
 
         for attempt in range(3):
             if self.cumulative_cost_usd >= self.config.max_run_cost_usd:
@@ -536,13 +550,21 @@ class GeminiRadarClient:
                     config=gen_config,
                 )
             except Exception as exc:  # noqa: BLE001
-                msg = redact_secrets(str(exc))
-                upper_msg = msg.upper()
-                is_transient = isinstance(exc, (TimeoutError, ConnectionError)) or any(
-                    marker in upper_msg for marker in _TRANSIENT_API_MARKERS
+                exc_name = type(exc).__name__
+                mro_names = " ".join(cls.__name__.upper() for cls in type(exc).__mro__)
+                msg = redact_secrets(str(exc)).strip()
+                detail = f"{exc_name}: {msg}" if msg else exc_name
+                upper_text = f"{mro_names} {msg.upper()}"
+                is_transient = (
+                    isinstance(exc, (TimeoutError, ConnectionError))
+                    or any(marker in upper_text for marker in _TRANSIENT_API_MARKERS)
+                    or any(
+                        kw in mro_names
+                        for kw in ("TIMEOUT", "TRANSPORTERROR", "CONNECTERROR", "REMOTEPROTOCOL")
+                    )
                 )
                 if not is_transient or attempt == 2:
-                    raise RuntimeError(f"Gemini API error ({stage}/{model_name}): {msg}") from None
+                    raise RuntimeError(f"Gemini API error ({stage}/{model_name}): {detail}") from None
                 time.sleep(1.5 * (2**attempt))
                 continue
 
@@ -553,6 +575,10 @@ class GeminiRadarClient:
             cached_tokens = int(getattr(usage, "cached_content_token_count", 0) or 0)
             output_tokens = int(getattr(usage, "candidates_token_count", 0) or 0)
             thought_tokens = int(getattr(usage, "thoughts_token_count", 0) or 0)
+            total_prompt_tokens += prompt_tokens
+            total_cached_tokens += cached_tokens
+            total_output_tokens += output_tokens
+            total_thought_tokens += thought_tokens
             cost = estimate_cost_usd(
                 model_name,
                 prompt_tokens=prompt_tokens,
@@ -609,6 +635,11 @@ class GeminiRadarClient:
                         finish_reason=finish_reason,
                         raw_preview=preview,
                     ) from None
+                if self.cumulative_cost_usd >= self.config.max_run_cost_usd:
+                    raise BudgetExceededError(
+                        f"Run cost ceiling ${self.config.max_run_cost_usd:.2f} reached "
+                        f"(spent ${self.cumulative_cost_usd:.4f})."
+                    ) from None
                 if finish_reason == "MAX_TOKENS" and current_max_tokens < MAX_STRUCTURED_OUTPUT_TOKENS:
                     current_max_tokens = min(MAX_STRUCTURED_OUTPUT_TOKENS, current_max_tokens * 2)
                 time.sleep(1.5 * (2**attempt))
@@ -620,10 +651,10 @@ class GeminiRadarClient:
                 resolved_model_version=str(getattr(response, "model_version", "") or ""),
                 thinking_level=safe_thinking,
                 api_version=api_version,
-                prompt_tokens=prompt_tokens,
-                cached_tokens=cached_tokens,
-                output_tokens=output_tokens,
-                thought_tokens=thought_tokens,
+                prompt_tokens=total_prompt_tokens,
+                cached_tokens=total_cached_tokens,
+                output_tokens=total_output_tokens,
+                thought_tokens=total_thought_tokens,
                 estimated_cost_usd=call_cost_usd,
                 item_ids=item_ids,
             )

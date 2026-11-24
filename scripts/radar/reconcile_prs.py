@@ -128,7 +128,10 @@ def reconcile_closed_weekly_prs(
     except (subprocess.CalledProcessError, OSError, ValueError) as exc:
         if not allow_gh_failure:
             raise
-        safe_err = redact_secrets(str(exc)).replace("\n", " ")[:240]
+        raw_detail = str(exc)
+        if isinstance(exc, subprocess.CalledProcessError) and exc.stderr:
+            raw_detail = f"{raw_detail}: {exc.stderr.strip()}"
+        safe_err = redact_secrets(raw_detail).replace("\r", " ").replace("\n", " ")[:240]
         print(
             f"::warning title=Radar PR reconciliation skipped::"
             f"Transient gh error during PR reconciliation (state preserved): {safe_err}",

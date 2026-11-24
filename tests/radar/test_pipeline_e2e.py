@@ -60,10 +60,14 @@ def test_dynamic_latest_alias_routing_and_zero_tool_config() -> None:
     assert requires_v1beta("gemini-flash-latest") is True
     assert requires_v1beta("gemini-pro-latest") is True
     assert requires_v1beta("gemini-4-neon") is True
+    assert requires_v1beta("gemini-4-hydrogen") is True
     assert requires_v1beta("gemini-3.8-flash") is False
     assert validate_thinking_level("gemini-3.8-flash", "MINIMAL") == "LOW"
     assert validate_thinking_level("gemini-4-neon", "MINIMAL") == "LOW"
+    assert validate_thinking_level("gemini-4-hydrogen", "MINIMAL") == "LOW"
     assert validate_thinking_level("gemini-flash-lite-latest", "MINIMAL") == "MINIMAL"
+    assert estimate_cost_usd("gemini-4-hydrogen", 1_000_000, 0, 1_000_000) == 9.0
+    assert estimate_cost_usd("gemini-4-hydrogen", 1_000_000, 1_000_000, 0) == 0.15
     assert estimate_cost_usd("gemini-4-neon", 1_000_000, 0, 1_000_000) == 18.0
     assert estimate_cost_usd("gemini-4-neon", 1_000_000, 1_000_000, 0) == 0.15
 
@@ -1926,6 +1930,8 @@ def test_total_stage1_failure_and_stage3_abort_preserve_pending_buffer(
     )
     assert sun_err_res.status == "PARTIAL_ERROR"
     assert sun_err_res.coherence_gate_completed is False
+    assert sun_err_res.drained_item_ids == []
+    assert "Drained from pending buffer" not in sun_err_res.summary_markdown
     assert sun_err_res.stage3_verdict is None
     assert [s.item.item_id for s in sun_err_res.buffered_items] == [sunday_item.item_id]
 
@@ -1960,6 +1966,7 @@ def test_total_stage1_failure_and_stage3_abort_preserve_pending_buffer(
     )
     assert sun_cap_res.cost_cap_triggered is True
     assert sun_cap_res.coherence_gate_completed is False
+    assert sun_cap_res.drained_item_ids == []
     sun_cap_path = tmp_path / "sun-cap.json"
     sun_cap_path.write_text(sun_cap_res.model_dump_json(indent=2), encoding="utf-8")
     apply_run_result_files(
@@ -1973,7 +1980,7 @@ def test_total_stage1_failure_and_stage3_abort_preserve_pending_buffer(
         sunday_item.item_id,
     }
 
-    # 3. Total Stage 1 failure -> status == "FAILED" and CLI exits 1
+    # 3. Total Stage 1 failure (including on Sunday with empty pending!) -> status == "FAILED" and CLI exits 1
     class _AllStage1FailLLM(_InventoryAwareStubLLM):
         def triage_stage1_batch(self, items, repo_inventory):
             raise StructuredOutputError(
@@ -1982,6 +1989,19 @@ def test_total_stage1_failure_and_stage3_abort_preserve_pending_buffer(
                 model_name="gemini-flash-lite-latest",
                 item_ids=[i.item_id for i in items],
             )
+
+    sun_empty_fail = run_pipeline(
+        config,
+        seen=SeenState(),
+        pending=PendingCandidatesState(),
+        mode="observe",
+        run_coherence_gate=True,
+        offline_candidates=[sunday_item],
+        llm_client=_AllStage1FailLLM(),
+        now=datetime(2026, 11, 22, 13, 0, tzinfo=UTC),
+    )
+    assert sun_empty_fail.coherence_gate_completed is False
+    assert sun_empty_fail.status == "FAILED"
 
     offline_file = tmp_path / "offline-one.json"
     offline_file.write_text(json.dumps([sunday_item.model_dump(mode="json")]), encoding="utf-8")
@@ -1995,6 +2015,7 @@ def test_total_stage1_failure_and_stage3_abort_preserve_pending_buffer(
             "run",
             "--mode",
             "observe",
+            "--run-coherence-gate",
             "--offline-items",
             str(offline_file),
             "--output",
@@ -2005,6 +2026,24 @@ def test_total_stage1_failure_and_stage3_abort_preserve_pending_buffer(
     )
     assert rc_fail == 1
     assert "FAILED" in fail_summary.read_text(encoding="utf-8")
+
+    # 4. Stage 1 SURVIVORs beyond max_stage2_survivors must be un-burned so they retry next run
+    capped_config = PipelineConfig(
+        repo_root=REPO_ROOT,
+        feeds_path=REPO_ROOT / "radar" / "feeds.yaml",
+        max_stage2_survivors=1,
+    )
+    overflow_res = run_pipeline(
+        capped_config,
+        seen=SeenState(),
+        mode="observe",
+        offline_candidates=[existing_item, sunday_item],
+        llm_client=_Stage3ErrorLLM(),
+        now=datetime(2026, 11, 18, 13, 0, tzinfo=UTC),  # Wednesday
+    )
+    assert len(overflow_res.stage2_results) == 1
+    assert existing_item.item_id in overflow_res.new_seen_records
+    assert sunday_item.item_id not in overflow_res.new_seen_records
 
 
 def test_zero_byte_corrupt_state_files_corrupt_run_result_and_sunday_no_gate(

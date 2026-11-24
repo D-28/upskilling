@@ -330,9 +330,12 @@ def test_budget_ceiling_stops_retries_after_expensive_failed_attempt(
         api_key="dummy-key",
         client_factory=lambda *, api_version: SimpleNamespace(models=_ExpensiveBrokenModels()),
     )
+    sleep_calls: list[float] = []
+    monkeypatch.setattr(llm_mod.time, "sleep", lambda s: sleep_calls.append(s))
     with pytest.raises(BudgetExceededError):
         client.analyze_stage2_survivor(_make_item(), "context")
     assert calls == 1
+    assert sleep_calls == []
     assert client.cumulative_cost_usd >= 0.01
 
 
@@ -340,6 +343,14 @@ def test_transient_network_errors_retry_and_non_transient_400_fails_fast(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(llm_mod.time, "sleep", lambda _s: None)
+
+    # Simulate google-genai's httpx2.ReadTimeout("") which does NOT inherit from TimeoutError
+    class _TransportError(Exception):
+        pass
+
+    class _ReadTimeout(_TransportError):
+        pass
+
     attempts = 0
     valid_s1 = Stage1BatchResponse(
         verdicts=[
@@ -356,7 +367,7 @@ def test_transient_network_errors_retry_and_non_transient_400_fails_fast(
             nonlocal attempts
             attempts += 1
             if attempts == 1:
-                raise TimeoutError("request timed out")
+                raise _ReadTimeout("")
             if attempts == 2:
                 raise RuntimeError("503 UNAVAILABLE backend busy")
             return _make_response(valid_s1)
@@ -370,6 +381,24 @@ def test_transient_network_errors_retry_and_non_transient_400_fails_fast(
     resp, _ = client.triage_stage1_batch([_make_item()], "inventory")
     assert attempts == 3
     assert len(resp.verdicts) == 1
+
+    # Exhausted empty-message _ReadTimeout must preserve class name in RuntimeError detail
+    always_timeout_calls = 0
+
+    class _AlwaysTimeoutModels:
+        def generate_content(self, *, model, contents, config):
+            nonlocal always_timeout_calls
+            always_timeout_calls += 1
+            raise _ReadTimeout("")
+
+    client_timeout = GeminiRadarClient(
+        config,
+        api_key="dummy-key",
+        client_factory=lambda *, api_version: SimpleNamespace(models=_AlwaysTimeoutModels()),
+    )
+    with pytest.raises(RuntimeError, match="_ReadTimeout"):
+        client_timeout.triage_stage1_batch([_make_item()], "inventory")
+    assert always_timeout_calls == 3
 
     # Non-transient 400 error must fail fast in 1 attempt
     bad_calls = 0
@@ -388,6 +417,65 @@ def test_transient_network_errors_retry_and_non_transient_400_fails_fast(
     with pytest.raises(RuntimeError, match="400 INVALID_ARGUMENT"):
         client2.triage_stage1_batch([_make_item()], "inventory")
     assert bad_calls == 1
+
+
+def test_prompt_feedback_safety_block_fails_fast_and_retry_trace_sums_tokens(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(llm_mod.time, "sleep", lambda _s: None)
+    calls = 0
+
+    class _PromptBlockedModels:
+        def generate_content(self, *, model, contents, config):
+            nonlocal calls
+            calls += 1
+            return SimpleNamespace(
+                text=None,
+                candidates=[],
+                prompt_feedback=SimpleNamespace(block_reason="SAFETY"),
+                model_version="gemini-3.8-flash-2026-11",
+                usage_metadata=SimpleNamespace(
+                    prompt_token_count=500,
+                    cached_content_token_count=0,
+                    candidates_token_count=0,
+                    thoughts_token_count=0,
+                ),
+            )
+
+    config = PipelineConfig(repo_root=REPO_ROOT, feeds_path=REPO_ROOT / "radar" / "feeds.yaml")
+    client = GeminiRadarClient(
+        config,
+        api_key="dummy-key",
+        client_factory=lambda *, api_version: SimpleNamespace(models=_PromptBlockedModels()),
+    )
+    with pytest.raises(StructuredOutputError) as exc_info:
+        client.analyze_stage2_survivor(_make_item(), "context")
+    assert calls == 1
+    assert exc_info.value.finish_reason == "SAFETY"
+
+    # Retried structured output call must sum prompt/output/thought tokens across attempts on trace
+    responses = [
+        _make_response("{broken", prompt_tokens=1_000, output_tokens=50, thought_tokens=200),
+        _make_response(json.dumps(_valid_stage2_dict()), prompt_tokens=1_000, output_tokens=150, thought_tokens=300),
+    ]
+    idx = 0
+
+    class _TwoAttemptModels:
+        def generate_content(self, *, model, contents, config):
+            nonlocal idx
+            resp = responses[idx]
+            idx += 1
+            return resp
+
+    client2 = GeminiRadarClient(
+        config,
+        api_key="dummy-key",
+        client_factory=lambda *, api_version: SimpleNamespace(models=_TwoAttemptModels()),
+    )
+    _, trace = client2.analyze_stage2_survivor(_make_item(), "context")
+    assert trace.prompt_tokens == 2_000
+    assert trace.output_tokens == 200
+    assert trace.thought_tokens == 500
 
 
 def test_real_genai_client_sets_explicit_http_timeout(monkeypatch: pytest.MonkeyPatch) -> None:

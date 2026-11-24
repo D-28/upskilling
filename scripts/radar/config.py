@@ -53,6 +53,7 @@ VALID_THINKING_LEVELS = frozenset({"MINIMAL", "LOW", "MEDIUM", "HIGH", "XHIGH"})
 MODEL_PRICE_ESTIMATES_PER_MTOK: dict[str, tuple[float, float, float]] = {
     "flash-lite": (0.35, 0.04, 2.75),
     "flash": (0.75, 0.08, 4.50),
+    "hydrogen": (1.50, 0.15, 7.50),
     "neon": (3.00, 0.15, 15.00),
     "pro": (2.50, 0.25, 15.00),
     "argon": (2.50, 0.25, 15.00),
@@ -95,7 +96,7 @@ def estimate_cost_usd(
     """Estimate request USD cost conservatively for circuit-breaker accounting."""
     lowered = model_name.lower()
     rates = MODEL_PRICE_ESTIMATES_PER_MTOK["default"]
-    for key in ("flash-lite", "flash", "neon", "carbon", "argon", "pro"):
+    for key in ("flash-lite", "flash", "hydrogen", "neon", "carbon", "argon", "pro"):
         if key in lowered:
             rates = MODEL_PRICE_ESTIMATES_PER_MTOK[key]
             break

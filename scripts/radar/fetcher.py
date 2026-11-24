@@ -457,7 +457,7 @@ def parse_hn_algolia(json_bytes: bytes, feed: FeedEntry) -> list[dict[str, str]]
         raw_points = hit.get("points")
         try:
             points = int(float(raw_points)) if raw_points not in (None, "") else 0
-        except (TypeError, ValueError):
+        except (TypeError, ValueError, OverflowError):
             points = 0
         if points < feed.min_points:
             continue

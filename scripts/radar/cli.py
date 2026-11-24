@@ -542,9 +542,11 @@ def run_pipeline(
                     verdict=verdict.verdict,
                 )
 
-        survivor_verdicts = [v for v in result.stage1_verdicts if v.verdict == "SURVIVOR"][
-            : config.max_stage2_survivors
-        ]
+        all_survivor_verdicts = [v for v in result.stage1_verdicts if v.verdict == "SURVIVOR"]
+        survivor_verdicts = all_survivor_verdicts[: config.max_stage2_survivors]
+        # Un-burn survivors beyond max_stage2_survivors so they retry on the next run instead of being dropped
+        for overflow_sv in all_survivor_verdicts[config.max_stage2_survivors :]:
+            result.new_seen_records.pop(overflow_sv.item_id, None)
 
         # Stage 2: enrich short-body survivors deterministically, then deep rubric delta
         for idx, sv in enumerate(survivor_verdicts):
@@ -647,7 +649,7 @@ def run_pipeline(
             de_anchored_inputs.append(de_anchor_candidate(scored, source_path=src_route))
             valid_stage3_ids.add(item_id)
 
-        result.drained_item_ids = drained_ids
+        result.drained_item_ids = []
         result.buffered_items = []
 
         if de_anchored_inputs:
@@ -664,9 +666,11 @@ def run_pipeline(
                 )
                 verdict = enforce_stage3_coherence_guardrails(raw_verdict, valid_stage3_ids)
                 result.coherence_gate_completed = bool(effective_coherence_gate)
+                result.drained_item_ids = drained_ids
             except BudgetExceededError:
                 result.cost_cap_triggered = True
                 result.coherence_gate_completed = False
+                result.drained_item_ids = []
                 qualifying_survivors.sort(key=lambda s: s.score, reverse=True)
                 result.buffered_items = qualifying_survivors
                 verdict = Stage3CoherenceVerdict(
@@ -681,6 +685,7 @@ def run_pipeline(
                     exc=exc,
                 )
                 result.coherence_gate_completed = False
+                result.drained_item_ids = []
                 qualifying_survivors.sort(key=lambda s: s.score, reverse=True)
                 result.buffered_items = qualifying_survivors
 
@@ -714,7 +719,7 @@ def run_pipeline(
                 result.staged_items = []
                 result.has_high_signal = False
         else:
-            result.coherence_gate_completed = bool(effective_coherence_gate)
+            result.coherence_gate_completed = bool(effective_coherence_gate) and not result.stage_errors
             result.staged_items = []
             result.has_high_signal = False
     else:
@@ -736,7 +741,7 @@ def run_pipeline(
             bool(candidates)
             and not is_fast_lane_direct
             and result.stage1_reviewed == 0
-            and not result.coherence_gate_completed
+            and result.stage3_verdict is None
         )
         pure_stage3_failed = (
             not candidates and has_pending_to_drain and not result.coherence_gate_completed

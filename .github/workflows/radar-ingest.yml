@@ -57,7 +57,8 @@ jobs:
       - name: Fetch existing radar-state/seen.json and pending-candidates.json (read-only)
         run: |
           mkdir -p /tmp/radar-state-read
-          if git fetch --depth=1 origin radar-state 2>/dev/null; then
+          if git ls-remote --exit-code --heads origin radar-state >/dev/null 2>&1; then
+            git fetch --depth=1 origin radar-state
             for f in seen.json pending-candidates.json; do
               if git show "FETCH_HEAD:${f}" > "/tmp/radar-state-read/${f}.tmp" 2>/dev/null; then
                 mv "/tmp/radar-state-read/${f}.tmp" "/tmp/radar-state-read/${f}"
