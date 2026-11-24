@@ -45,11 +45,13 @@ When explaining an architecture, algorithm, bug root cause, or PR diff, match th
 Unattended agents do not ask follow-up questions on ambiguous rules. They guess a reading and act. Follow this procedure to make instructions deterministically checkable:
 
 ### Step 1: Run the Deterministic Baseline Check
-Run the repository STE linter on the target file before editing:
+Run the bundled STE linter from this skill directory before editing:
 
 ```bash
-python3 scripts/ste_lint.py --stats <target-file>
+python3 <skill-dir>/scripts/ste_lint.py --stats <target-file>
 ```
+
+If Python 3 is unavailable, audit the file manually against the 8 Core Rules above.
 
 ### Step 2: Rewrite Violations Without Losing Meaning
 1. Replace every semicolon outside code spans with a period.
@@ -59,5 +61,5 @@ python3 scripts/ste_lint.py --stats <target-file>
 5. Align all entity, file, and module names with `GLOSSARY.md`.
 
 ### Step 3: Verify Diff and Linter Score
-1. Re-run `python3 scripts/ste_lint.py --stats --check <target-file>` and confirm zero errors.
+1. Re-run `python3 <skill-dir>/scripts/ste_lint.py --stats --check <target-file>` and confirm zero errors.
 2. Compare `git diff <target-file>` line by line to confirm no condition, exception, or path was dropped.
