@@ -109,7 +109,7 @@ All skills under `skills/` follow the open **Agent Skills (`SKILL.md`)** directo
 ./scripts/install-skills.sh
 
 # Install into a specific project repo (.agent/skills, .github/skills, .claude/skills)
-./scripts/install-skills.sh --scope repo --repo-root /path/to/repo --tool copilot --tool claude
+./scripts/install-skills.sh --repo-root /path/to/repo --tool copilot --tool claude
 
 # Copy instead of symlinking, or install to a custom directory (e.g. Codex)
 ./scripts/install-skills.sh --copy --target ~/.codex/skills
@@ -122,3 +122,9 @@ All skills under `skills/` follow the open **Agent Skills (`SKILL.md`)** directo
 - **GitHub Copilot CLI:** `~/.copilot/skills/<skill>` (user) or `.github/skills/<skill>` (repo).
 - **Claude Code:** `~/.claude/skills/<skill>` (user) or `.claude/skills/<skill>` (repo).
 - **Codex / other tools:** Pass `--target <dir>` (or `--dir <dir>`), and reference `templates/AGENTS.md.template` as root `AGENTS.md`.
+
+**Day-to-day usage notes:**
+- **Clone into a permanent directory** (e.g. `~/upskilling` or `~/dev/upskilling`). Default symlink mode points to the clone's absolute path, so `git pull` updates existing skills immediately across all tools; only re-run `./scripts/install-skills.sh` when a *new* skill folder is added under `skills/`.
+- **Moving the clone:** Re-run `./scripts/install-skills.sh --force` from the new path to relink stale symlinks.
+- **Restricted symlinks / standalone copies:** Pass `--copy` instead (and re-run `--copy` after `git pull` to refresh managed copies).
+- **Per-repo installs:** Passing `--repo-root <path>` automatically implies `--scope repo` and leaves your user-level `$HOME` directories untouched.
