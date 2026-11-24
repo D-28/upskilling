@@ -50,3 +50,15 @@ Append-only log of Stage 3 (`gemini-4-neon`, `HIGH`) systemic coherence decision
 | `5cb0b0021d6c` | Codez on X: "T3 Code: build ai agent teams with all frontier models (Full-Course)" / X | `REJECT_ENTROPY` | `attention_budget_poison, prompt_wish_poison, verification_weakening_poison, orchestration_tax_poison, cross_file_disharmony` | `-` | `playbooks/harness-loop-graph.md, playbooks/verification-engineering.md, playbooks/programmatic-tooling-mcp.md, templates/AGENTS.md.template, docs/adr/0001-coherence-gate-and-fast-lane.md` | This T3 Code tutorial triggers five Systemic Poisons. It mandates a five-agent team on every project instead of proving one loop first. It enforces read-only review and file fences through prompt wishes rather than hooks or sandboxes. Its /goal command lets agents self-judge completion. Adding TEAM.md and exposing a laptop MCP server to a cloud bot also contradicts existing playbooks and ADR-0001. |
 
 ---
+
+<!-- radar-audit: 2026-W48 run_at: 2026-11-24T18:32:29.520736+00:00 -->
+## 2026-W48 — `REJECT_ALL` (2026-11-24)
+
+- **Run Timestamp:** `2026-11-24T18:32:29.520736+00:00` · **Mode:** `observe` · **Route:** `fast-lane`
+- **Executive Summary:** Reject candidate c04b8ea7540c because the repository baseline already captures its full architecture. Playbooks and templates already contain the three-layer model, bug #482 examples, Early-Start Test, and Undo-Price Gating. Merging this duplicate material would bloat the context attention budget without adding a new invariant. Keep the baseline unchanged. Open no pull request.
+
+| Item ID | Title | Verdict | Systemic Poisons | Related IDs | Affected Files | Rationale |
+|---|---|---|---|---|---|---|
+| `c04b8ea7540c` | m4lka on X: "Harness, Loops, Graphs: What Each Layer Fixes and What It Breaks" / X | `SUBSUMED_BY` | `attention_budget_poison` | `-` | `playbooks/harness-loop-graph.md, templates/undo-price-gating.md` | The repository baseline already covers every concept and example in this article. playbooks/harness-loop-graph.md contains the exact bug #482 contract, structured feedback template, Early-Start Test, 4 Cuts, and 7-row diagnostic matrix. templates/undo-price-gating.md already enforces Undo-Price Gating outside the model. Adding the article's 7-level labels would repeat existing rules and waste attention budget. |
+
+---
