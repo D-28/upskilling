@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 import re
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -429,12 +430,10 @@ def test_bundled_ste_lint_script_installed_and_runnable(tmp_path: Path) -> None:
         linter = skill_root / "scripts" / "ste_lint.py"
         assert linter.is_file()
         lint_res = subprocess.run(
-            ["python3", str(linter), "--stats", "--check", "--strict-20", str(sample_doc)],
+            [sys.executable, str(linter), "--stats", "--check", "--strict-20", str(sample_doc)],
             cwd=str(other_repo),
             text=True,
             capture_output=True,
             check=False,
         )
         assert lint_res.returncode == 0, lint_res.stderr
-
-
