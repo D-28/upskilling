@@ -310,3 +310,101 @@ def test_invalid_arguments_fail_cleanly(tmp_path: Path, bad_args: tuple[str, ...
     res = run_installer(*bad_args, home=fake_home)
     assert res.returncode != 0
     assert "ERROR:" in res.stderr
+
+
+def test_refuses_source_skills_dir_as_target(tmp_path: Path) -> None:
+    fake_home = tmp_path / "home"
+    fake_home.mkdir()
+    symlink_to_skills = tmp_path / "skills-alias"
+    symlink_to_skills.symlink_to(SKILLS_DIR)
+
+    for target in (SKILLS_DIR, symlink_to_skills):
+        res = run_installer("--target", str(target), "--force", home=fake_home)
+        assert res.returncode != 0
+        assert "Refusing to use skills source directory as target" in res.stderr
+
+    # Verify source skills are completely untouched
+    for skill in EXPECTED_SKILLS:
+        assert (SKILLS_DIR / skill / "SKILL.md").is_file()
+
+
+def test_repo_root_implies_repo_scope_and_rejects_explicit_user_scope(tmp_path: Path) -> None:
+    fake_home = tmp_path / "home"
+    fake_home.mkdir()
+    project = tmp_path / "my-project"
+    project.mkdir()
+
+    # --repo-root without --scope implies --scope repo (never touches HOME)
+    res_implied = run_installer("--repo-root", str(project), "--tool", "copilot", home=fake_home)
+    assert res_implied.returncode == 0, res_implied.stderr
+    for skill in EXPECTED_SKILLS:
+        assert (project / ".github" / "skills" / skill).is_symlink()
+    assert list(fake_home.iterdir()) == []
+
+    # Explicit --scope user + --repo-root fails loudly
+    res_conflict = run_installer(
+        "--scope", "user", "--repo-root", str(project), "--tool", "copilot", home=fake_home
+    )
+    assert res_conflict.returncode != 0
+    assert "Cannot combine --repo-root with --scope user" in res_conflict.stderr
+
+
+def test_empty_home_fails_cleanly_for_user_scope(tmp_path: Path) -> None:
+    env = os.environ.copy()
+    env["HOME"] = ""
+    res_user = subprocess.run(
+        ["bash", str(INSTALLER), "--tool", "copilot"],
+        cwd=str(REPO_ROOT),
+        env=env,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    assert res_user.returncode != 0
+    assert "HOME is not set or empty" in res_user.stderr
+
+    # Explicit --target still works even when HOME is empty
+    custom_target = tmp_path / "custom-skills"
+    res_target = subprocess.run(
+        ["bash", str(INSTALLER), "--target", str(custom_target)],
+        cwd=str(REPO_ROOT),
+        env=env,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    assert res_target.returncode == 0, res_target.stderr
+    for skill in EXPECTED_SKILLS:
+        assert (custom_target / skill).is_symlink()
+
+
+def test_trailing_slashes_deduplicated_and_normalized(tmp_path: Path) -> None:
+    fake_home = tmp_path / "home"
+    fake_home.mkdir()
+    target = tmp_path / "codex-skills"
+
+    res = run_installer("--target", f"{target}///", "--dir", str(target), home=fake_home)
+    assert res.returncode == 0, res.stderr
+    assert f"installed={len(EXPECTED_SKILLS)}" in res.stdout
+    assert "//" not in res.stdout
+
+
+def test_converts_managed_copy_back_to_symlink_and_leaves_no_temp_dirs(tmp_path: Path) -> None:
+    fake_home = tmp_path / "home"
+    fake_home.mkdir()
+
+    # Copy, then refresh (exercises atomic temp dir), then convert back to symlinks
+    assert run_installer("--copy", "--tool", "antigravity", home=fake_home).returncode == 0
+    assert run_installer("--copy", "--tool", "antigravity", home=fake_home).returncode == 0
+
+    ag_skills = fake_home / ".gemini" / "jetski" / "skills"
+    assert not list(ag_skills.glob(".upskilling-tmp.*"))
+
+    res_sym = run_installer("--tool", "antigravity", home=fake_home)
+    assert res_sym.returncode == 0, res_sym.stderr
+    assert f"updated={len(EXPECTED_SKILLS)}" in res_sym.stdout
+    for skill in EXPECTED_SKILLS:
+        link_path = ag_skills / skill
+        assert link_path.is_symlink()
+        assert link_path.resolve() == (SKILLS_DIR / skill).resolve()
+

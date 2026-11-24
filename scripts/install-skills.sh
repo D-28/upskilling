@@ -9,6 +9,7 @@ readonly MARKER_FILE=".upskilling-managed"
 # Defaults
 MODE="symlink"          # symlink | copy | uninstall
 SCOPE="user"            # user | repo
+SCOPE_EXPLICIT=0
 DRY_RUN=0
 FORCE=0
 REPO_ROOT=""
@@ -75,6 +76,28 @@ die() {
 canonical_dir() {
   local dir="$1"
   (cd "$dir" 2>/dev/null && pwd -P)
+}
+
+# Strip trailing slashes (preserving root "/").
+strip_trailing_slashes() {
+  local p="$1"
+  while [ "${#p}" -gt 1 ] && [ "${p%/}" != "$p" ]; do
+    p="${p%/}"
+  done
+  printf '%s\n' "$p"
+}
+
+# Refuse to mutate or delete a destination path that resolves to the source dir itself.
+assert_not_source_path() {
+  local dest_path="$1"
+  local src_dir="$2"
+  local dest_canon=""
+  if [ -d "$dest_path" ] && [ ! -L "$dest_path" ]; then
+    dest_canon="$(canonical_dir "$dest_path" || true)"
+    if [ -n "$dest_canon" ] && [ "$dest_canon" = "$src_dir" ]; then
+      die "Refusing to modify source skill directory itself: $dest_path"
+    fi
+  fi
 }
 
 # Resolve the directory containing this script, following symlinks portably.
@@ -175,10 +198,12 @@ parse_args() {
         ;;
       --scope)
         require_arg_value "$1" "$#"
+        SCOPE_EXPLICIT=1
         SCOPE="$2"
         shift 2
         ;;
       --scope=*)
+        SCOPE_EXPLICIT=1
         SCOPE="${1#--scope=}"
         shift
         ;;
@@ -241,6 +266,13 @@ parse_args() {
     *) die "Unsupported --scope value '$SCOPE'. Expected: user or repo." ;;
   esac
 
+  if [ -n "$REPO_ROOT" ]; then
+    if [ "$SCOPE_EXPLICIT" -eq 1 ] && [ "$SCOPE" = "user" ]; then
+      die "Cannot combine --repo-root with --scope user (use --scope repo)."
+    fi
+    SCOPE="repo"
+  fi
+
   if [ "$TOOLS_EXPLICIT" -eq 0 ] && [ "${#CUSTOM_TARGETS[@]}" -eq 0 ]; then
     add_tool "all"
   fi
@@ -285,12 +317,32 @@ write_managed_copy() {
   printf 'source=%s\n' "$src_dir" > "$dest_path/$MARKER_FILE"
 }
 
+# Stage a fresh managed copy into a sibling temp dir before replacing dest_path,
+# so a failed cp never leaves an existing destination deleted.
+replace_with_managed_copy() {
+  local src_dir="$1"
+  local dest_root="$2"
+  local dest_path="$3"
+  local tmp_dir=""
+
+  tmp_dir="$(mktemp -d "${dest_root}/.upskilling-tmp.XXXXXX")"
+  if ! write_managed_copy "$src_dir" "$tmp_dir/skill"; then
+    rm -rf "$tmp_dir"
+    return 1
+  fi
+  rm -rf "$dest_path"
+  mv "$tmp_dir/skill" "$dest_path"
+  rmdir "$tmp_dir"
+}
+
 install_symlink_one() {
   local skill_name="$1"
   local src_dir="$2"
   local dest_root="$3"
   local dest_path="$dest_root/$skill_name"
   local existing_target=""
+
+  assert_not_source_path "$dest_path" "$src_dir"
 
   if [ -L "$dest_path" ]; then
     existing_target="$(resolve_link_target "$dest_path")"
@@ -312,6 +364,18 @@ install_symlink_one() {
     fi
     log_warn "Skipping foreign symlink $dest_path -> $existing_target (re-run with --force to replace)"
     COUNT_SKIPPED=$((COUNT_SKIPPED + 1))
+    return 0
+  fi
+
+  if [ -d "$dest_path" ] && [ -f "$dest_path/$MARKER_FILE" ]; then
+    if [ "$DRY_RUN" -eq 1 ]; then
+      log_info "  [DRY-RUN] WOULD REPLACE MANAGED COPY WITH SYMLINK $dest_path -> $src_dir"
+    else
+      rm -rf "$dest_path"
+      ln -s "$src_dir" "$dest_path"
+      log_info "  [UPDATED]   $dest_path -> $src_dir (converted managed copy to symlink)"
+    fi
+    COUNT_UPDATED=$((COUNT_UPDATED + 1))
     return 0
   fi
 
@@ -349,14 +413,15 @@ install_copy_one() {
   local dest_path="$dest_root/$skill_name"
   local existing_target=""
 
+  assert_not_source_path "$dest_path" "$src_dir"
+
   if [ -L "$dest_path" ]; then
     existing_target="$(resolve_link_target "$dest_path")"
     if [ "$existing_target" = "$src_dir" ] || [ "$FORCE" -eq 1 ]; then
       if [ "$DRY_RUN" -eq 1 ]; then
         log_info "  [DRY-RUN] WOULD REPLACE SYMLINK WITH COPY $dest_path <- $src_dir"
       else
-        rm -f "$dest_path"
-        write_managed_copy "$src_dir" "$dest_path"
+        replace_with_managed_copy "$src_dir" "$dest_root" "$dest_path"
         log_info "  [UPDATED]   $dest_path <- $src_dir (converted symlink to managed copy)"
       fi
       COUNT_UPDATED=$((COUNT_UPDATED + 1))
@@ -372,8 +437,7 @@ install_copy_one() {
       if [ "$DRY_RUN" -eq 1 ]; then
         log_info "  [DRY-RUN] WOULD REFRESH COPY $dest_path <- $src_dir"
       else
-        rm -rf "$dest_path"
-        write_managed_copy "$src_dir" "$dest_path"
+        replace_with_managed_copy "$src_dir" "$dest_root" "$dest_path"
         log_info "  [UPDATED]   $dest_path <- $src_dir (refreshed copy)"
       fi
       COUNT_UPDATED=$((COUNT_UPDATED + 1))
@@ -389,8 +453,7 @@ install_copy_one() {
       if [ "$DRY_RUN" -eq 1 ]; then
         log_info "  [DRY-RUN] WOULD REPLACE FILE WITH COPY $dest_path <- $src_dir"
       else
-        rm -rf "$dest_path"
-        write_managed_copy "$src_dir" "$dest_path"
+        replace_with_managed_copy "$src_dir" "$dest_root" "$dest_path"
         log_info "  [UPDATED]   $dest_path <- $src_dir (replaced existing file)"
       fi
       COUNT_UPDATED=$((COUNT_UPDATED + 1))
@@ -417,6 +480,8 @@ uninstall_one() {
   local dest_root="$3"
   local dest_path="$dest_root/$skill_name"
   local existing_target=""
+
+  assert_not_source_path "$dest_path" "$src_dir"
 
   if [ -L "$dest_path" ]; then
     existing_target="$(resolve_link_target "$dest_path")"
@@ -501,12 +566,19 @@ main() {
     fi
   fi
 
+  # Validate HOME when user-scoped built-in tools are requested
+  if [ "$SCOPE" = "user" ] && [ "${#SELECTED_TOOLS[@]}" -gt 0 ]; then
+    if [ -z "${HOME:-}" ]; then
+      die "HOME is not set or empty; set HOME or pass --target / --scope repo."
+    fi
+  fi
+
   # Build deduplicated list of destination directories
   local dest_dirs=()
   local tool=""
   local resolved_dir=""
   for tool in ${SELECTED_TOOLS[@]+"${SELECTED_TOOLS[@]}"}; do
-    resolved_dir="$(resolve_tool_dir "$tool" "$effective_repo_root")"
+    resolved_dir="$(strip_trailing_slashes "$(resolve_tool_dir "$tool" "$effective_repo_root")")"
     if ! array_contains "$resolved_dir" ${dest_dirs[@]+"${dest_dirs[@]}"}; then
       dest_dirs+=("$resolved_dir")
     fi
@@ -517,8 +589,21 @@ main() {
     if [ -z "$custom" ]; then
       die "Empty --target/--dir path is not allowed."
     fi
+    custom="$(strip_trailing_slashes "$custom")"
     if ! array_contains "$custom" ${dest_dirs[@]+"${dest_dirs[@]}"}; then
       dest_dirs+=("$custom")
+    fi
+  done
+
+  # Refuse any target directory that resolves to the repo's own skills/ directory
+  local check_root=""
+  local check_canon=""
+  for check_root in "${dest_dirs[@]}"; do
+    if [ -d "$check_root" ]; then
+      check_canon="$(canonical_dir "$check_root" || true)"
+      if [ -n "$check_canon" ] && [ "$check_canon" = "$skills_src_dir" ]; then
+        die "Refusing to use skills source directory as target: $check_root"
+      fi
     fi
   done
 
