@@ -62,3 +62,19 @@ Append-only log of Stage 3 (`gemini-4-neon`, `HIGH`) systemic coherence decision
 | `c04b8ea7540c` | m4lka on X: "Harness, Loops, Graphs: What Each Layer Fixes and What It Breaks" / X | `SUBSUMED_BY` | `attention_budget_poison` | `-` | `playbooks/harness-loop-graph.md, templates/undo-price-gating.md` | The repository baseline already covers every concept and example in this article. playbooks/harness-loop-graph.md contains the exact bug #482 contract, structured feedback template, Early-Start Test, 4 Cuts, and 7-row diagnostic matrix. templates/undo-price-gating.md already enforces Undo-Price Gating outside the model. Adding the article's 7-level labels would repeat existing rules and waste attention budget. |
 
 ---
+
+<!-- radar-audit: 2026-W48 run_at: 2026-11-24T19:48:00.683495+00:00 -->
+## 2026-W48 — `APPROVE_SYNTHESIS` (2026-11-24)
+
+- **Run Timestamp:** `2026-11-24T19:48:00.683495+00:00` · **Mode:** `observe` · **Route:** `fast-lane`
+- **Executive Summary:** Approve one vendor-neutral synthesis extracted from google-gemini/gemini-api-cli. Ignore product catalog details and Gemini model listings. Adopt its Agent-Native CLI Contract to sharpen existing tool and helper-script invariants. The contract covers on-demand schema discovery, offline dry-run redaction, non-interactive flags, typed exit codes, and path-only stdout. All six Systemic Poison checks pass because the CLI binary enforces every rule deterministically. Tightening existing helper-script and experimental Code Mode prose keeps the repository attention budget flat.
+
+| Item ID | Title | Verdict | Systemic Poisons | Related IDs | Affected Files | Rationale |
+|---|---|---|---|---|---|---|
+| `9ea07726f1a3` | gemini-api-cli/README.md at main · google-gemini/gemini-api-cli · GitHub | `APPROVE_SYNTHESIS` | `none` | `-` | `playbooks/programmatic-tooling-mcp.md, playbooks/harness-loop-graph.md, templates/AGENTS.md.template` | Ignore vendor media commands and model lists. Extract four deterministic CLI invariants missing from current playbooks. On-demand --usage and --schema flags replace static prompt docs. Offline --dry-run checks payloads without touching keychains. Typed exit codes (0, 1, 2, 3) and --no-interactive stop blind retries and TUI hangs. Path-only stdout, async IDs, and inline --jq protect the Smart Zone. Zero Systemic Poisons trigger. |
+
+### Approved Syntheses
+
+- **Agent-Native CLI Contract: Self-Describing, Dry-Run, and Context-Minimal Tooling** (`9ea07726f1a3`) -> `playbooks/programmatic-tooling-mcp.md, playbooks/harness-loop-graph.md, templates/AGENTS.md.template`
+
+---
