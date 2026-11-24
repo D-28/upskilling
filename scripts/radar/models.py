@@ -382,6 +382,18 @@ class FeedFetchSummary(BaseModel):
     filtered_count: int = 0
 
 
+class StageErrorRecord(BaseModel):
+    """Sanitized record of a non-fatal or fatal LLM stage failure for CI diagnostics."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    stage: Literal["stage1", "stage2", "stage3"]
+    item_ids: list[str] = Field(default_factory=list)
+    error_type: str = ""
+    message: str = ""
+    finish_reason: str = ""
+
+
 class RunResult(BaseModel):
     """Validated JSON artifact handed from Job 1 (read-only) to Job 2 (privileged stager)."""
 
@@ -392,7 +404,8 @@ class RunResult(BaseModel):
     fast_lane_url: str | None = None
     force: bool = False
     run_coherence_gate: bool = False
-    status: Literal["OK", "FETCH_INCOMPLETE"] = "OK"
+    coherence_gate_completed: bool = False
+    status: Literal["OK", "FETCH_INCOMPLETE", "PARTIAL_ERROR", "FAILED"] = "OK"
     error_code: str = ""
     error_message: str = ""
     feed_summaries: list[FeedFetchSummary] = Field(default_factory=list)
@@ -408,6 +421,7 @@ class RunResult(BaseModel):
     has_high_signal: bool = False
     new_seen_records: dict[str, SeenRecord] = Field(default_factory=dict)
     traces: list[LLMCallTrace] = Field(default_factory=list)
+    stage_errors: list[StageErrorRecord] = Field(default_factory=list)
     total_estimated_cost_usd: float = 0.0
     cost_cap_triggered: bool = False
     summary_markdown: str = ""

@@ -29,6 +29,7 @@ from scripts.radar.llm import (
     BudgetExceededError,
     GeminiRadarClient,
     RadarLLMClient,
+    StructuredOutputError,
     de_anchor_candidate,
 )
 from scripts.radar.models import (
@@ -44,6 +45,7 @@ from scripts.radar.models import (
     SeenState,
     Stage1ItemVerdict,
     Stage3CoherenceVerdict,
+    StageErrorRecord,
 )
 from scripts.radar.rubric import (
     approved_stage3_item_ids,
@@ -75,6 +77,46 @@ def current_iso_week(now: datetime | None = None) -> str:
     dt = now or datetime.now(UTC)
     iso = dt.isocalendar()
     return f"{iso.year}-W{iso.week:02d}"
+
+
+def _record_stage_error(
+    result: RunResult,
+    *,
+    stage: str,
+    item_ids: list[str],
+    exc: Exception,
+) -> None:
+    """Append a sanitized stage error record and emit a GitHub Actions warning annotation."""
+    finish_reason = str(getattr(exc, "finish_reason", "") or "")
+    safe_msg = sanitize_single_line(redact_secrets(str(exc)), 300)
+    err = StageErrorRecord(
+        stage=stage,  # type: ignore[arg-type]
+        item_ids=list(item_ids),
+        error_type=type(exc).__name__,
+        message=safe_msg,
+        finish_reason=finish_reason,
+    )
+    result.stage_errors.append(err)
+    ids_label = ",".join(item_ids[:5]) if item_ids else "none"
+    print(
+        f"::warning title=Radar {stage} error ({err.error_type})::"
+        f"items={ids_label} finish_reason={finish_reason or 'n/a'} {safe_msg}",
+        file=sys.stderr,
+    )
+
+
+def _write_github_output(path: Path, values: dict[str, object]) -> None:
+    """Append sanitized single-line key=value pairs to a $GITHUB_OUTPUT file."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    lines: list[str] = []
+    for key, val in values.items():
+        if isinstance(val, bool):
+            rendered = "true" if val else "false"
+        else:
+            rendered = str(val).replace("\r", " ").replace("\n", " ").strip()
+        lines.append(f"{key}={rendered}")
+    with path.open("a", encoding="utf-8") as fh:
+        fh.write("\n".join(lines) + "\n")
 
 
 def _to_candidate_summary(item: CandidateItem) -> CandidateSummary:
@@ -298,6 +340,25 @@ def build_job_summary_markdown(result: RunResult) -> str:
             safe_err = sanitize_single_line(redact_secrets(f.error), 200)
             lines.append(f"- `{sanitize_single_line(f.feed_id, 60)}`: {safe_err}")
 
+    if result.stage_errors:
+        lines.extend(
+            [
+                "",
+                "### Pipeline / LLM Errors",
+                "",
+                "| Stage | Item IDs | Error Type | Finish Reason | Details |",
+                "|---|---|---|---|---|",
+            ]
+        )
+        for err in result.stage_errors:
+            ids_cell = sanitize_single_line(", ".join(err.item_ids) or "-", 120)
+            type_cell = sanitize_single_line(err.error_type or "Error", 60)
+            reason_cell = sanitize_single_line(err.finish_reason or "-", 40)
+            msg_cell = sanitize_single_line(redact_secrets(err.message), 260)
+            lines.append(
+                f"| `{err.stage}` | `{ids_cell}` | `{type_cell}` | `{reason_cell}` | {msg_cell} |"
+            )
+
     lines.append("")
     return "\n".join(lines)
 
@@ -448,12 +509,20 @@ def run_pipeline(
                     result.total_estimated_cost_usd + trace.estimated_cost_usd, 6
                 )
                 for v in batch_resp.verdicts:
-                    if v.item_id in by_id:
+                    if v.item_id in by_id and v.item_id not in verdicts_by_id:
                         verdicts_by_id[v.item_id] = v
                         result.stage1_verdicts.append(v)
             except BudgetExceededError:
                 result.cost_cap_triggered = True
                 break
+            except (StructuredOutputError, RuntimeError) as exc:
+                _record_stage_error(
+                    result,
+                    stage="stage1",
+                    item_ids=[i.item_id for i in batch],
+                    exc=exc,
+                )
+                continue
 
         result.stage1_reviewed = len(verdicts_by_id)
 
@@ -473,12 +542,14 @@ def run_pipeline(
                     verdict=verdict.verdict,
                 )
 
-        survivor_verdicts = [v for v in result.stage1_verdicts if v.verdict == "SURVIVOR"][
-            : config.max_stage2_survivors
-        ]
+        all_survivor_verdicts = [v for v in result.stage1_verdicts if v.verdict == "SURVIVOR"]
+        survivor_verdicts = all_survivor_verdicts[: config.max_stage2_survivors]
+        # Un-burn survivors beyond max_stage2_survivors so they retry on the next run instead of being dropped
+        for overflow_sv in all_survivor_verdicts[config.max_stage2_survivors :]:
+            result.new_seen_records.pop(overflow_sv.item_id, None)
 
         # Stage 2: enrich short-body survivors deterministically, then deep rubric delta
-        for sv in survivor_verdicts:
+        for idx, sv in enumerate(survivor_verdicts):
             item = by_id[sv.item_id]
             if offline_candidates is None:
                 item = enrich_survivor_body(item, config=config, http_get=http_get)
@@ -504,7 +575,20 @@ def run_pipeline(
                 )
             except BudgetExceededError:
                 result.cost_cap_triggered = True
+                # Un-burn this and all remaining un-scored Stage 2 survivors so they retry next run
+                for rem_sv in survivor_verdicts[idx:]:
+                    result.new_seen_records.pop(rem_sv.item_id, None)
                 break
+            except (StructuredOutputError, RuntimeError) as exc:
+                _record_stage_error(
+                    result,
+                    stage="stage2",
+                    item_ids=[item.item_id],
+                    exc=exc,
+                )
+                # Un-burn failed survivor so it is NOT lost in seen.json and retries next run
+                result.new_seen_records.pop(item.item_id, None)
+                continue
 
             scored = score_stage2_analysis(
                 item,
@@ -565,12 +649,13 @@ def run_pipeline(
             de_anchored_inputs.append(de_anchor_candidate(scored, source_path=src_route))
             valid_stage3_ids.add(item_id)
 
-        result.drained_item_ids = drained_ids
+        result.drained_item_ids = []
         result.buffered_items = []
 
         if de_anchored_inputs:
             full_baseline = load_full_repo_baseline(config.repo_root, exclude_files=excluded)
             active_client = _get_llm_client()
+            verdict: Stage3CoherenceVerdict | None = None
             try:
                 raw_verdict, trace = active_client.evaluate_stage3_coherence(
                     de_anchored_inputs, full_baseline
@@ -580,35 +665,61 @@ def run_pipeline(
                     result.total_estimated_cost_usd + trace.estimated_cost_usd, 6
                 )
                 verdict = enforce_stage3_coherence_guardrails(raw_verdict, valid_stage3_ids)
+                result.coherence_gate_completed = bool(effective_coherence_gate)
+                result.drained_item_ids = drained_ids
             except BudgetExceededError:
                 result.cost_cap_triggered = True
+                result.coherence_gate_completed = False
+                result.drained_item_ids = []
+                qualifying_survivors.sort(key=lambda s: s.score, reverse=True)
+                result.buffered_items = qualifying_survivors
                 verdict = Stage3CoherenceVerdict(
                     decision="REJECT_ALL",
                     executive_summary="Stage 3 skipped because run cost ceiling was reached.",
                 )
+            except (StructuredOutputError, RuntimeError) as exc:
+                _record_stage_error(
+                    result,
+                    stage="stage3",
+                    item_ids=[c.item_id for c in de_anchored_inputs],
+                    exc=exc,
+                )
+                result.coherence_gate_completed = False
+                result.drained_item_ids = []
+                qualifying_survivors.sort(key=lambda s: s.score, reverse=True)
+                result.buffered_items = qualifying_survivors
 
-            result.stage3_verdict = verdict
-            audits_by_id = {a.item_id: a for a in verdict.item_audits}
+            if verdict is not None:
+                result.stage3_verdict = verdict
+                audits_by_id = {a.item_id: a for a in verdict.item_audits}
 
-            if is_fast_lane_direct and mode != "observe":
-                for item in candidates:
-                    audit = audits_by_id.get(item.item_id)
-                    v_code = audit.verdict if audit is not None else verdict.decision
-                    result.new_seen_records[item.item_id] = SeenRecord(
-                        canonical_url=item.canonical_url,
-                        title_hash=item.title_hash,
-                        content_hash=item.content_hash,
-                        feed_id=item.feed_id,
-                        first_seen_at=run_at,
-                        verdict=f"STAGE3:{v_code}",
-                    )
+                if (
+                    is_fast_lane_direct
+                    and mode != "observe"
+                    and not result.cost_cap_triggered
+                ):
+                    for item in candidates:
+                        audit = audits_by_id.get(item.item_id)
+                        v_code = audit.verdict if audit is not None else verdict.decision
+                        result.new_seen_records[item.item_id] = SeenRecord(
+                            canonical_url=item.canonical_url,
+                            title_hash=item.title_hash,
+                            content_hash=item.content_hash,
+                            feed_id=item.feed_id,
+                            first_seen_at=run_at,
+                            verdict=f"STAGE3:{v_code}",
+                        )
 
-            approved_ids = approved_stage3_item_ids(verdict)
-            staged = [combined_by_id[iid] for iid in approved_ids if iid in combined_by_id]
-            staged.sort(key=lambda s: s.score, reverse=True)
-            result.staged_items = staged
-            result.has_high_signal = any(s.disposition == "HIGH_SIGNAL" for s in staged)
+                approved_ids = approved_stage3_item_ids(verdict)
+                staged = [combined_by_id[iid] for iid in approved_ids if iid in combined_by_id]
+                staged.sort(key=lambda s: s.score, reverse=True)
+                result.staged_items = staged
+                result.has_high_signal = any(s.disposition == "HIGH_SIGNAL" for s in staged)
+            else:
+                result.staged_items = []
+                result.has_high_signal = False
         else:
+            result.coherence_gate_completed = bool(effective_coherence_gate) and not result.stage_errors
             result.staged_items = []
             result.has_high_signal = False
     else:
@@ -616,6 +727,35 @@ def run_pipeline(
         result.buffered_items = qualifying_survivors
         result.staged_items = []
         result.has_high_signal = False
+
+    if client is not None:
+        client_spend = float(getattr(client, "cumulative_cost_usd", 0.0) or 0.0)
+        if client_spend > result.total_estimated_cost_usd:
+            result.total_estimated_cost_usd = round(client_spend, 6)
+
+    if result.stage_errors:
+        fast_lane_failed = is_fast_lane_direct and any(
+            err.stage == "stage3" for err in result.stage_errors
+        )
+        all_stage1_failed = (
+            bool(candidates)
+            and not is_fast_lane_direct
+            and result.stage1_reviewed == 0
+            and result.stage3_verdict is None
+        )
+        pure_stage3_failed = (
+            not candidates and has_pending_to_drain and not result.coherence_gate_completed
+        )
+        if fast_lane_failed or all_stage1_failed or pure_stage3_failed:
+            result.status = "FAILED"
+            result.error_code = result.stage_errors[0].error_type or "LLM_STAGE_ERROR"
+            result.error_message = result.stage_errors[0].message
+        else:
+            result.status = "PARTIAL_ERROR"
+            result.error_code = "PARTIAL_ERROR"
+            result.error_message = (
+                f"{len(result.stage_errors)} LLM stage error(s) isolated; partial work preserved."
+            )
 
     result.summary_markdown = build_job_summary_markdown(result)
     return result
@@ -713,27 +853,56 @@ def _cmd_inventory(args: argparse.Namespace) -> int:
 
 
 def _cmd_run(args: argparse.Namespace) -> int:
-    config = PipelineConfig.from_env(Path(args.repo_root))
-    seen = load_seen_state(Path(args.seen_path)) if args.seen_path else SeenState()
-    pending_arg = getattr(args, "pending_path", "")
-    pending = load_pending_candidates(Path(pending_arg)) if pending_arg else PendingCandidatesState()
-    offline_candidates = None
-    if args.offline_items:
-        raw = json.loads(Path(args.offline_items).read_text(encoding="utf-8"))
-        offline_candidates = [CandidateItem.model_validate(item) for item in raw]
+    try:
+        config = PipelineConfig.from_env(Path(args.repo_root))
+        seen = load_seen_state(Path(args.seen_path)) if args.seen_path else SeenState()
+        pending_arg = getattr(args, "pending_path", "")
+        pending = (
+            load_pending_candidates(Path(pending_arg))
+            if pending_arg
+            else PendingCandidatesState()
+        )
+        offline_candidates = None
+        if args.offline_items:
+            raw = json.loads(Path(args.offline_items).read_text(encoding="utf-8"))
+            if not isinstance(raw, list):
+                raise ValueError(
+                    f"Expected JSON array in --offline-items ({args.offline_items}), "
+                    f"got {type(raw).__name__}"
+                )
+            offline_candidates = [CandidateItem.model_validate(item) for item in raw]
 
-    gate_flag = True if getattr(args, "run_coherence_gate", False) else None
-    result = run_pipeline(
-        config,
-        seen=seen,
-        pending=pending,
-        mode=args.mode,
-        fast_lane_url=args.url or None,
-        force=bool(getattr(args, "force", False)),
-        run_coherence_gate=gate_flag,
-        offline_candidates=offline_candidates,
-        exclude_repo_files=args.withhold or [],
-    )
+        gate_flag = getattr(args, "run_coherence_gate", None)
+        result = run_pipeline(
+            config,
+            seen=seen,
+            pending=pending,
+            mode=args.mode,
+            fast_lane_url=args.url or None,
+            force=bool(getattr(args, "force", False)),
+            run_coherence_gate=gate_flag,
+            offline_candidates=offline_candidates,
+            exclude_repo_files=args.withhold or [],
+        )
+    except Exception as exc:  # noqa: BLE001
+        safe_err = sanitize_single_line(redact_secrets(str(exc)), 300)
+        if args.summary_out:
+            summary_path = Path(args.summary_out)
+            summary_path.parent.mkdir(parents=True, exist_ok=True)
+            summary_path.write_text(
+                "\n".join(
+                    [
+                        f"## Radar Ingestion Summary — Fatal Error (`{args.mode}`)",
+                        "",
+                        f"- **Error Type:** `{type(exc).__name__}`",
+                        f"- **Details:** {safe_err}",
+                        "",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+        raise
+
     out_path = Path(args.output)
     out_path.parent.mkdir(parents=True, exist_ok=True)
     out_path.write_text(result.model_dump_json(indent=2) + "\n", encoding="utf-8")
@@ -742,7 +911,7 @@ def _cmd_run(args: argparse.Namespace) -> int:
         summary_path.parent.mkdir(parents=True, exist_ok=True)
         summary_path.write_text(result.summary_markdown, encoding="utf-8")
     print(result.summary_markdown)
-    if result.status == "FETCH_INCOMPLETE" or result.error_code == "FETCH_INCOMPLETE":
+    if result.status in ("FETCH_INCOMPLETE", "FAILED") or result.error_code == "FETCH_INCOMPLETE":
         return 1
     return 0
 
@@ -760,6 +929,20 @@ def _cmd_apply_state(args: argparse.Namespace) -> int:
         summary_out_path=Path(args.summary_out) if args.summary_out else None,
         update_state=not args.no_update_state,
     )
+    github_output = getattr(args, "github_output", "")
+    if github_output:
+        _write_github_output(
+            Path(github_output),
+            {
+                "mode": outcome["mode"],
+                "iso_week": outcome["iso_week"],
+                "run_coherence_gate": outcome["run_coherence_gate"],
+                "stage3_decision": outcome["stage3_decision"],
+                "buffered_count": outcome["buffered_count"],
+                "staged_count": outcome["staged_count"],
+                "has_high_signal": outcome["has_high_signal"],
+            },
+        )
     print(json.dumps(outcome, indent=2))
     return 0
 
@@ -834,8 +1017,9 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p_run.add_argument(
         "--run-coherence-gate",
-        action="store_true",
-        help="Drain pending-candidates.json through the weekly Coherence Gate.",
+        action=argparse.BooleanOptionalAction,
+        default=None,
+        help="Drain pending-candidates.json through the weekly Coherence Gate (pass --no-run-coherence-gate to disable on Sundays).",
     )
     p_run.add_argument("--offline-items", default="", help="Optional JSON list of CandidateItems for offline runs.")
     p_run.add_argument("--withhold", action="append", default=[], help="Withhold repo files (calibration testing).")
@@ -857,6 +1041,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p_apply.add_argument("--digest-dir", default="", help="Directory for radar/YYYY-Www-digest.md (enforce mode).")
     p_apply.add_argument("--summary-out", default="", help="Regenerate sanitized summary markdown in Job 2.")
+    p_apply.add_argument("--github-output", default="", help="Optional $GITHUB_OUTPUT path for Job 2 step outputs.")
     p_apply.add_argument("--no-update-state", action="store_true", help="Render digest without re-applying state counters.")
     p_apply.set_defaults(func=_cmd_apply_state)
 

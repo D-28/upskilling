@@ -445,12 +445,20 @@ def parse_rss_or_atom(xml_bytes: bytes, feed: FeedEntry) -> list[dict[str, str]]
 def parse_hn_algolia(json_bytes: bytes, feed: FeedEntry) -> list[dict[str, str]]:
     """Parse HN Algolia search_by_date JSON payload into raw item dicts."""
     payload = json.loads(json_bytes.decode("utf-8", errors="replace"))
+    if not isinstance(payload, dict):
+        raise ValueError(f"Expected JSON object from HN Algolia feed, got {type(payload).__name__}")
     hits = payload.get("hits", [])
+    if not isinstance(hits, list):
+        raise ValueError(f"Expected JSON list for 'hits' in HN Algolia feed, got {type(hits).__name__}")
     entries: list[dict[str, str]] = []
     for hit in hits:
         if not isinstance(hit, dict):
             continue
-        points = int(hit.get("points") or 0)
+        raw_points = hit.get("points")
+        try:
+            points = int(float(raw_points)) if raw_points not in (None, "") else 0
+        except (TypeError, ValueError, OverflowError):
+            points = 0
         if points < feed.min_points:
             continue
         title = str(hit.get("title") or "").strip()

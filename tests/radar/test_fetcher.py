@@ -363,3 +363,56 @@ def test_fast_lane_plan_b_resolves_x_stub_with_embedded_blog_link_and_oembed(
         )
     assert fetched_urls == ["https://stub.example.dev/thin"]
 
+
+def test_parse_hn_algolia_handles_malformed_json_shapes_and_non_numeric_points() -> None:
+    import pytest
+
+    from scripts.radar.fetcher import parse_hn_algolia
+
+    feed = FeedEntry(
+        id="hn-agentic",
+        name="HN",
+        type="hn_algolia",
+        url="https://hn.algolia.com/api/v1/search_by_date?tags=story",
+        min_points=10,
+        max_items=5,
+    )
+
+    with pytest.raises(ValueError, match="Expected JSON object"):
+        parse_hn_algolia(b"[]", feed)
+
+    with pytest.raises(ValueError, match="Expected JSON object"):
+        parse_hn_algolia(b"null", feed)
+
+    with pytest.raises(ValueError, match="Expected JSON list"):
+        parse_hn_algolia(b'{"hits": null}', feed)
+
+    mixed_payload = json.dumps(
+        {
+            "hits": [
+                "not-a-dict",
+                {"title": "Bad points string", "url": "https://example.dev/a", "points": "N/A"},
+                {"title": "Inf points string", "url": "https://example.dev/inf", "points": "inf"},
+                {"title": "Good float points", "url": "https://example.dev/b", "points": "42.0"},
+            ]
+        }
+    ).encode("utf-8")
+    parsed = parse_hn_algolia(mixed_payload, feed)
+    assert len(parsed) == 1
+    assert parsed[0]["url"] == "https://example.dev/b"
+
+    # Truncated JSON from HN is caught per-feed in fetch_candidates without aborting other feeds
+    registry = FeedRegistry(feeds=[feed])
+    config = PipelineConfig(repo_root=Path("."), feeds_path=Path("radar/feeds.yaml"))
+    candidates, summaries = fetch_candidates(
+        registry,
+        SeenState(),
+        config,
+        http_get=lambda u: (u, b'{"hits": [{"title": "cut off'),
+    )
+    assert candidates == []
+    assert len(summaries) == 1
+    assert summaries[0].ok is False
+    assert summaries[0].error
+
+

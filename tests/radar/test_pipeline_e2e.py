@@ -60,10 +60,14 @@ def test_dynamic_latest_alias_routing_and_zero_tool_config() -> None:
     assert requires_v1beta("gemini-flash-latest") is True
     assert requires_v1beta("gemini-pro-latest") is True
     assert requires_v1beta("gemini-4-neon") is True
+    assert requires_v1beta("gemini-4-hydrogen") is True
     assert requires_v1beta("gemini-3.8-flash") is False
     assert validate_thinking_level("gemini-3.8-flash", "MINIMAL") == "LOW"
     assert validate_thinking_level("gemini-4-neon", "MINIMAL") == "LOW"
+    assert validate_thinking_level("gemini-4-hydrogen", "MINIMAL") == "LOW"
     assert validate_thinking_level("gemini-flash-lite-latest", "MINIMAL") == "MINIMAL"
+    assert estimate_cost_usd("gemini-4-hydrogen", 1_000_000, 0, 1_000_000) == 9.0
+    assert estimate_cost_usd("gemini-4-hydrogen", 1_000_000, 1_000_000, 0) == 0.15
     assert estimate_cost_usd("gemini-4-neon", 1_000_000, 0, 1_000_000) == 18.0
     assert estimate_cost_usd("gemini-4-neon", 1_000_000, 1_000_000, 0) == 0.15
 
@@ -1632,3 +1636,513 @@ def test_fast_lane_verified_url_bypasses_stage1_directly_into_stage3(tmp_path: P
     assert len(fl_markers) == 1
     assert fl_markers[0][1] == "fast-lane"
     assert fl_markers[0][2] == "eng.example.dev"
+
+
+def test_stage2_partial_failure_unburns_failed_item_and_persists_valid_work(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    from scripts.radar.cli import main
+    from scripts.radar.llm import BudgetExceededError, StructuredOutputError
+    from scripts.radar.state import load_pending_candidates
+
+    config = PipelineConfig(repo_root=REPO_ROOT, feeds_path=REPO_ROOT / "radar" / "feeds.yaml")
+    cand1 = CandidateItem(
+        item_id="e11111111111",
+        feed_id="hn-agentic",
+        feed_name="Hacker News",
+        title="Item One That Fails Stage 2 JSON",
+        url="https://example.dev/item-1",
+        canonical_url="https://example.dev/item-1",
+        domain="example.dev",
+        body="Substantive article one about harness isolation.",
+    )
+    cand2 = CandidateItem(
+        item_id="e22222222222",
+        feed_id="simon-willison",
+        feed_name="Simon Willison",
+        title="Item Two That Succeeds Stage 2",
+        url="https://example.dev/item-2",
+        canonical_url="https://example.dev/item-2",
+        domain="example.dev",
+        body="Substantive article two about verification loops.",
+    )
+    stage2_seen_ids: list[str] = []
+
+    class _PartialFailStage2LLM(_InventoryAwareStubLLM):
+        def triage_stage1_batch(self, items, repo_inventory):
+            # Intentionally emit a DUPLICATE item_id for cand1 to also test Stage 1 deduplication
+            verdicts = [
+                Stage1ItemVerdict(
+                    item_id=cand1.item_id,
+                    verdict="SURVIVOR",
+                    matched_repo_file="playbooks/harness-loop-graph.md",
+                    reason="Net-new pattern one.",
+                ),
+                Stage1ItemVerdict(
+                    item_id=cand1.item_id,
+                    verdict="SURVIVOR",
+                    matched_repo_file="playbooks/harness-loop-graph.md",
+                    reason="Duplicate verdict must be ignored.",
+                ),
+                Stage1ItemVerdict(
+                    item_id=cand2.item_id,
+                    verdict="SURVIVOR",
+                    matched_repo_file="playbooks/verification-engineering.md",
+                    reason="Net-new pattern two.",
+                ),
+            ]
+            trace = LLMCallTrace(
+                stage="stage1",
+                requested_model="gemini-flash-lite-latest",
+                resolved_model_version="stub-flash-lite",
+                thinking_level="LOW",
+                api_version="v1beta",
+                estimated_cost_usd=0.0005,
+                item_ids=[i.item_id for i in items],
+            )
+            return Stage1BatchResponse(verdicts=verdicts), trace
+
+        def analyze_stage2_survivor(self, item, target_repo_context):
+            stage2_seen_ids.append(item.item_id)
+            if item.item_id == cand1.item_id:
+                raise StructuredOutputError(
+                    "Gemini structured output failed after 3 attempts (stage2/gemini-flash-latest, finish_reason=MAX_TOKENS): Expecting ',' delimiter",
+                    stage="stage2",
+                    model_name="gemini-flash-latest",
+                    item_ids=[item.item_id],
+                    finish_reason="MAX_TOKENS",
+                )
+            return super().analyze_stage2_survivor(item, target_repo_context)
+
+    stub = _PartialFailStage2LLM()
+    res = run_pipeline(
+        config,
+        seen=SeenState(),
+        mode="observe",
+        offline_candidates=[cand1, cand2],
+        llm_client=stub,
+        now=datetime(2026, 11, 18, 13, 0, tzinfo=UTC),  # Wednesday
+    )
+    # Duplicate Stage 1 verdict was deduplicated so Stage 2 saw cand1 only once
+    assert stage2_seen_ids == [cand1.item_id, cand2.item_id]
+    assert res.status == "PARTIAL_ERROR"
+    assert len(res.stage_errors) == 1
+    assert res.stage_errors[0].stage == "stage2"
+    assert res.stage_errors[0].item_ids == [cand1.item_id]
+    assert res.stage_errors[0].finish_reason == "MAX_TOKENS"
+    assert "### Pipeline / LLM Errors" in res.summary_markdown
+    # Valid item 2 is scored, buffered, and recorded in seen.json; failed item 1 is UN-BURNED!
+    assert [s.item.item_id for s in res.buffered_items] == [cand2.item_id]
+    assert cand2.item_id in res.new_seen_records
+    assert cand1.item_id not in res.new_seen_records
+
+    # Persisting via Job 2 keeps cand1 eligible for tomorrow's retry while saving cand2
+    run_result_path = tmp_path / "partial-result.json"
+    seen_path = tmp_path / "state" / "seen.json"
+    health_path = tmp_path / "state" / "feed-health.json"
+    pending_path = tmp_path / "state" / "pending-candidates.json"
+    gh_out_path = tmp_path / "github_output.txt"
+    run_result_path.write_text(res.model_dump_json(indent=2), encoding="utf-8")
+
+    exit_apply = main(
+        [
+            "--repo-root",
+            str(REPO_ROOT),
+            "apply-state",
+            "--run-result",
+            str(run_result_path),
+            "--seen-path",
+            str(seen_path),
+            "--health-path",
+            str(health_path),
+            "--pending-path",
+            str(pending_path),
+            "--github-output",
+            str(gh_out_path),
+        ]
+    )
+    assert exit_apply == 0
+    persisted_seen = load_seen_state(seen_path)
+    assert cand2.item_id in persisted_seen.items
+    assert cand1.item_id not in persisted_seen.items
+    assert set(load_pending_candidates(pending_path).items.keys()) == {cand2.item_id}
+    gh_out_text = gh_out_path.read_text(encoding="utf-8")
+    assert "mode=observe\n" in gh_out_text
+    assert "buffered_count=1\n" in gh_out_text
+    assert "staged_count=0\n" in gh_out_text
+    assert "has_high_signal=false\n" in gh_out_text
+
+    # Stage 2 BudgetExceededError mid-loop must also un-burn remaining un-scored survivors
+    class _BudgetCapStage2LLM(_PartialFailStage2LLM):
+        def analyze_stage2_survivor(self, item, target_repo_context):
+            raise BudgetExceededError("Run cost ceiling reached.")
+
+    cap_res = run_pipeline(
+        config,
+        seen=SeenState(),
+        mode="observe",
+        offline_candidates=[cand1, cand2],
+        llm_client=_BudgetCapStage2LLM(),
+        now=datetime(2026, 11, 18, 13, 0, tzinfo=UTC),
+    )
+    assert cap_res.cost_cap_triggered is True
+    assert cand1.item_id not in cap_res.new_seen_records
+    assert cand2.item_id not in cap_res.new_seen_records
+
+    # CLI exits 0 on PARTIAL_ERROR (so Job 2 persists valid partial work)
+    offline_file = tmp_path / "offline.json"
+    offline_file.write_text(
+        json.dumps([cand1.model_dump(mode="json"), cand2.model_dump(mode="json")]),
+        encoding="utf-8",
+    )
+    cli_out = tmp_path / "cli-partial.json"
+    cli_summary = tmp_path / "cli-partial.md"
+    monkeypatch.setattr("scripts.radar.cli.GeminiRadarClient", lambda cfg: stub)
+    rc = main(
+        [
+            "--repo-root",
+            str(REPO_ROOT),
+            "run",
+            "--mode",
+            "observe",
+            "--offline-items",
+            str(offline_file),
+            "--output",
+            str(cli_out),
+            "--summary-out",
+            str(cli_summary),
+        ]
+    )
+    assert rc == 0
+    assert "PARTIAL_ERROR" in cli_summary.read_text(encoding="utf-8")
+
+
+def test_total_stage1_failure_and_stage3_abort_preserve_pending_buffer(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    from scripts.radar.cli import main
+    from scripts.radar.llm import BudgetExceededError, StructuredOutputError
+    from scripts.radar.models import PendingCandidate, PendingCandidatesState
+    from scripts.radar.state import load_pending_candidates, save_pending_candidates
+
+    config = PipelineConfig(repo_root=REPO_ROOT, feeds_path=REPO_ROOT / "radar" / "feeds.yaml")
+    seen_path = tmp_path / "state" / "seen.json"
+    health_path = tmp_path / "state" / "feed-health.json"
+    pending_path = tmp_path / "state" / "pending-candidates.json"
+
+    existing_item = CandidateItem(
+        item_id="f11111111111",
+        feed_id="hn-agentic",
+        feed_name="Hacker News",
+        title="Existing Buffered Weekly Survivor",
+        url="https://example.dev/buffered-existing",
+        canonical_url="https://example.dev/buffered-existing",
+        domain="example.dev",
+        body="Concrete buffered survivor awaiting Sunday Coherence Gate.",
+    )
+    sunday_item = CandidateItem(
+        item_id="f22222222222",
+        feed_id="simon-willison",
+        feed_name="Simon Willison",
+        title="Sunday New Survivor",
+        url="https://example.dev/sunday-new",
+        canonical_url="https://example.dev/sunday-new",
+        domain="example.dev",
+        body="Sunday survivor scored in Stage 2 before Stage 3 fails.",
+    )
+    save_pending_candidates(
+        pending_path,
+        PendingCandidatesState(
+            updated_at="2026-11-20T13:00:00+00:00",
+            items={
+                existing_item.item_id: PendingCandidate(
+                    item=existing_item,
+                    analysis=Stage2Analysis(
+                        item_id=existing_item.item_id,
+                        passes_net_new_delta_gate=True,
+                        passes_substance_gate=True,
+                        counterargument_to_drop="Minor overlap.",
+                        dimensions=RubricDimensions(
+                            delta_novelty=2,
+                            durability=2,
+                            actionability=2,
+                            evidence_quality=1,
+                            career_leverage=1,
+                        ),
+                        target_repo_files=["playbooks/verification-engineering.md"],
+                        what_is_net_new="Buffered delta.",
+                        proposed_refinement="Keep buffered until Stage 3 actually completes.",
+                        career_takeaway="Important.",
+                    ),
+                    score=8,
+                    disposition="STAGE",
+                    buffered_at="2026-11-20T13:00:00+00:00",
+                    iso_week="2026-W47",
+                )
+            },
+        ),
+    )
+
+    # 1. Stage 3 fails with StructuredOutputError on Sunday when daily item succeeded:
+    #    existing pending item MUST NOT be wiped AND Sunday's survivor MUST be buffered!
+    class _Stage3ErrorLLM(_InventoryAwareStubLLM):
+        def triage_stage1_batch(self, items, repo_inventory):
+            verdicts = [
+                Stage1ItemVerdict(
+                    item_id=i.item_id,
+                    verdict="SURVIVOR",
+                    matched_repo_file="playbooks/verification-engineering.md",
+                    reason="Passes Stage 1.",
+                )
+                for i in items
+            ]
+            trace = LLMCallTrace(
+                stage="stage1",
+                requested_model="gemini-flash-lite-latest",
+                resolved_model_version="stub",
+                thinking_level="LOW",
+                api_version="v1beta",
+                estimated_cost_usd=0.0005,
+                item_ids=[i.item_id for i in items],
+            )
+            return Stage1BatchResponse(verdicts=verdicts), trace
+
+        def evaluate_stage3_coherence(self, candidates, full_repo_baseline):
+            raise StructuredOutputError(
+                "Malformed JSON in Stage 3",
+                stage="stage3",
+                model_name="gemini-4-neon",
+                item_ids=[c.item_id for c in candidates],
+                finish_reason="MAX_TOKENS",
+            )
+
+    sun_err_res = run_pipeline(
+        config,
+        seen=SeenState(),
+        pending=load_pending_candidates(pending_path),
+        mode="enforce",
+        run_coherence_gate=True,
+        offline_candidates=[sunday_item],
+        llm_client=_Stage3ErrorLLM(),
+        now=datetime(2026, 11, 22, 13, 0, tzinfo=UTC),  # Sunday
+    )
+    assert sun_err_res.status == "PARTIAL_ERROR"
+    assert sun_err_res.coherence_gate_completed is False
+    assert sun_err_res.drained_item_ids == []
+    assert "Drained from pending buffer" not in sun_err_res.summary_markdown
+    assert sun_err_res.stage3_verdict is None
+    assert [s.item.item_id for s in sun_err_res.buffered_items] == [sunday_item.item_id]
+
+    sun_err_path = tmp_path / "sun-err.json"
+    sun_err_path.write_text(sun_err_res.model_dump_json(indent=2), encoding="utf-8")
+    apply_run_result_files(
+        run_result_path=sun_err_path,
+        seen_path=seen_path,
+        health_path=health_path,
+        pending_path=pending_path,
+    )
+    # BOTH existing_item and sunday_item are preserved in pending-candidates.json!
+    assert set(load_pending_candidates(pending_path).items.keys()) == {
+        existing_item.item_id,
+        sunday_item.item_id,
+    }
+
+    # 2. Stage 3 BudgetExceededError must also preserve pending-candidates.json
+    class _Stage3BudgetCapLLM(_Stage3ErrorLLM):
+        def evaluate_stage3_coherence(self, candidates, full_repo_baseline):
+            raise BudgetExceededError("Run cost ceiling reached.")
+
+    sun_cap_res = run_pipeline(
+        config,
+        seen=SeenState(),
+        pending=load_pending_candidates(pending_path),
+        mode="enforce",
+        run_coherence_gate=True,
+        offline_candidates=[],
+        llm_client=_Stage3BudgetCapLLM(),
+        now=datetime(2026, 11, 22, 14, 0, tzinfo=UTC),
+    )
+    assert sun_cap_res.cost_cap_triggered is True
+    assert sun_cap_res.coherence_gate_completed is False
+    assert sun_cap_res.drained_item_ids == []
+    sun_cap_path = tmp_path / "sun-cap.json"
+    sun_cap_path.write_text(sun_cap_res.model_dump_json(indent=2), encoding="utf-8")
+    apply_run_result_files(
+        run_result_path=sun_cap_path,
+        seen_path=seen_path,
+        health_path=health_path,
+        pending_path=pending_path,
+    )
+    assert set(load_pending_candidates(pending_path).items.keys()) == {
+        existing_item.item_id,
+        sunday_item.item_id,
+    }
+
+    # 3. Total Stage 1 failure (including on Sunday with empty pending!) -> status == "FAILED" and CLI exits 1
+    class _AllStage1FailLLM(_InventoryAwareStubLLM):
+        def triage_stage1_batch(self, items, repo_inventory):
+            raise StructuredOutputError(
+                "Malformed Stage 1 batch JSON",
+                stage="stage1",
+                model_name="gemini-flash-lite-latest",
+                item_ids=[i.item_id for i in items],
+            )
+
+    sun_empty_fail = run_pipeline(
+        config,
+        seen=SeenState(),
+        pending=PendingCandidatesState(),
+        mode="observe",
+        run_coherence_gate=True,
+        offline_candidates=[sunday_item],
+        llm_client=_AllStage1FailLLM(),
+        now=datetime(2026, 11, 22, 13, 0, tzinfo=UTC),
+    )
+    assert sun_empty_fail.coherence_gate_completed is False
+    assert sun_empty_fail.status == "FAILED"
+
+    offline_file = tmp_path / "offline-one.json"
+    offline_file.write_text(json.dumps([sunday_item.model_dump(mode="json")]), encoding="utf-8")
+    fail_out = tmp_path / "fail-out.json"
+    fail_summary = tmp_path / "fail-summary.md"
+    monkeypatch.setattr("scripts.radar.cli.GeminiRadarClient", lambda cfg: _AllStage1FailLLM())
+    rc_fail = main(
+        [
+            "--repo-root",
+            str(REPO_ROOT),
+            "run",
+            "--mode",
+            "observe",
+            "--run-coherence-gate",
+            "--offline-items",
+            str(offline_file),
+            "--output",
+            str(fail_out),
+            "--summary-out",
+            str(fail_summary),
+        ]
+    )
+    assert rc_fail == 1
+    assert "FAILED" in fail_summary.read_text(encoding="utf-8")
+
+    # 4. Stage 1 SURVIVORs beyond max_stage2_survivors must be un-burned so they retry next run
+    capped_config = PipelineConfig(
+        repo_root=REPO_ROOT,
+        feeds_path=REPO_ROOT / "radar" / "feeds.yaml",
+        max_stage2_survivors=1,
+    )
+    overflow_res = run_pipeline(
+        capped_config,
+        seen=SeenState(),
+        mode="observe",
+        offline_candidates=[existing_item, sunday_item],
+        llm_client=_Stage3ErrorLLM(),
+        now=datetime(2026, 11, 18, 13, 0, tzinfo=UTC),  # Wednesday
+    )
+    assert len(overflow_res.stage2_results) == 1
+    assert existing_item.item_id in overflow_res.new_seen_records
+    assert sunday_item.item_id not in overflow_res.new_seen_records
+
+
+def test_zero_byte_corrupt_state_files_corrupt_run_result_and_sunday_no_gate(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    import pytest
+    from pydantic import ValidationError
+
+    from scripts.radar.cli import main
+    from scripts.radar.state import load_pending_candidates
+
+    # 1. 0-byte / whitespace state files load cleanly as empty defaults (prevents git show > file bug)
+    empty_seen = tmp_path / "empty_seen.json"
+    empty_health = tmp_path / "empty_health.json"
+    empty_pending = tmp_path / "empty_pending.json"
+    empty_seen.write_text("", encoding="utf-8")
+    empty_health.write_text("   \n", encoding="utf-8")
+    empty_pending.write_text("", encoding="utf-8")
+    assert load_seen_state(empty_seen).items == {}
+    assert load_feed_health(empty_health).feeds == {}
+    assert load_pending_candidates(empty_pending).items == {}
+
+    # 2. Corrupt JSON or non-object JSON root raises clear ValueError mentioning file path
+    corrupt_seen = tmp_path / "corrupt_seen.json"
+    corrupt_seen.write_text("{truncated", encoding="utf-8")
+    with pytest.raises(ValueError, match="corrupt_seen.json"):
+        load_seen_state(corrupt_seen)
+
+    list_health = tmp_path / "list_health.json"
+    list_health.write_text("[]", encoding="utf-8")
+    with pytest.raises(ValueError, match="Expected JSON object"):
+        load_feed_health(list_health)
+
+    # 3. Corrupt run-result.json at Job 1 -> Job 2 boundary fails closed without mutating state
+    bad_run_result = tmp_path / "bad-run-result.json"
+    bad_run_result.write_text('{"schema_version": 1, "iso_week": "../evil"}', encoding="utf-8")
+    seen_path = tmp_path / "state" / "seen.json"
+    health_path = tmp_path / "state" / "feed-health.json"
+    with pytest.raises(ValidationError):
+        apply_run_result_files(
+            run_result_path=bad_run_result,
+            seen_path=seen_path,
+            health_path=health_path,
+        )
+    assert not seen_path.exists()
+    assert not health_path.exists()
+
+    # 4. --no-run-coherence-gate disables Stage 3 even on a Sunday
+    empty_offline = tmp_path / "empty-offline.json"
+    empty_offline.write_text("[]", encoding="utf-8")
+    no_gate_out = tmp_path / "no-gate-out.json"
+    captured_gate: dict[str, object] = {}
+    orig_run_pipeline = run_pipeline
+
+    def _spy_run_pipeline(*args, **kwargs):
+        captured_gate["run_coherence_gate"] = kwargs.get("run_coherence_gate")
+        kwargs["now"] = datetime(2026, 11, 22, 13, 0, tzinfo=UTC)  # Sunday
+        return orig_run_pipeline(*args, **kwargs)
+
+    monkeypatch.setattr("scripts.radar.cli.run_pipeline", _spy_run_pipeline)
+    rc = main(
+        [
+            "--repo-root",
+            str(REPO_ROOT),
+            "run",
+            "--mode",
+            "observe",
+            "--no-run-coherence-gate",
+            "--offline-items",
+            str(empty_offline),
+            "--output",
+            str(no_gate_out),
+        ]
+    )
+    assert rc == 0
+    assert captured_gate["run_coherence_gate"] is False
+    parsed_out = json.loads(no_gate_out.read_text(encoding="utf-8"))
+    assert parsed_out["run_coherence_gate"] is False
+
+    # 5. Unexpected fatal error in _cmd_run still writes redacted failure summary
+    crash_summary = tmp_path / "crash-summary.md"
+    bad_offline = tmp_path / "bad-offline.json"
+    bad_offline.write_text('{"not": "a list"}', encoding="utf-8")
+    with pytest.raises(ValueError, match="Expected JSON array"):
+        main(
+            [
+                "--repo-root",
+                str(REPO_ROOT),
+                "run",
+                "--mode",
+                "observe",
+                "--offline-items",
+                str(bad_offline),
+                "--output",
+                str(tmp_path / "unused.json"),
+                "--summary-out",
+                str(crash_summary),
+            ]
+        )
+    assert "Fatal Error" in crash_summary.read_text(encoding="utf-8")
+

@@ -16,12 +16,18 @@ import json
 import os
 import re
 import secrets
+import sys
 import time
-from typing import Any, Protocol, TypeVar
+from typing import Any, Protocol, TypeVar, get_args, get_origin
 
-from pydantic import BaseModel
+from pydantic import BaseModel, ValidationError
 
 from scripts.radar.config import (
+    LLM_HTTP_TIMEOUT_MS,
+    MAX_STRUCTURED_OUTPUT_TOKENS,
+    STAGE1_MAX_OUTPUT_TOKENS,
+    STAGE2_MAX_OUTPUT_TOKENS,
+    STAGE3_MAX_OUTPUT_TOKENS,
     PipelineConfig,
     estimate_cost_usd,
     requires_v1beta,
@@ -107,6 +113,166 @@ def de_anchor_candidate(
 
 class BudgetExceededError(RuntimeError):
     """Raised when cumulative run cost hits the deterministic USD ceiling."""
+
+
+class StructuredOutputError(RuntimeError):
+    """Raised when Gemini returns malformed, truncated, blocked, or schema-invalid JSON."""
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        stage: str = "",
+        model_name: str = "",
+        item_ids: list[str] | None = None,
+        finish_reason: str = "",
+        raw_preview: str = "",
+    ) -> None:
+        super().__init__(message)
+        self.stage = stage
+        self.model_name = model_name
+        self.item_ids = list(item_ids or [])
+        self.finish_reason = finish_reason
+        self.raw_preview = raw_preview
+
+
+_MARKDOWN_FENCE_RE = re.compile(
+    r"^\s*```(?:json)?\s*\r?\n(.*?)\r?\n```\s*$",
+    re.DOTALL | re.IGNORECASE,
+)
+_NON_RETRYABLE_FINISH_REASONS = frozenset(
+    {
+        "SAFETY",
+        "PROHIBITED_CONTENT",
+        "BLOCKLIST",
+        "SPII",
+        "RECITATION",
+        "MODEL_ARMOR",
+        "IMAGE_SAFETY",
+        "IMAGE_PROHIBITED_CONTENT",
+        "IMAGE_RECITATION",
+    }
+)
+_TRANSIENT_API_MARKERS = (
+    "429",
+    "500",
+    "502",
+    "503",
+    "504",
+    "RESOURCE_EXHAUSTED",
+    "UNAVAILABLE",
+    "DEADLINE_EXCEEDED",
+    "INTERNAL",
+    "TIMED OUT",
+    "TIMEOUT",
+    "CONNECTION RESET",
+    "TEMPORARILY UNAVAILABLE",
+)
+
+
+def _reject_json_constant(token: str) -> Any:
+    raise ValueError(f"Disallowed non-standard JSON constant: {token}")
+
+
+def _extract_json_text(raw_text: str) -> str:
+    """Strip UTF-8 BOM, whitespace, and accidental Markdown JSON code fences."""
+    cleaned = raw_text.lstrip("\ufeff").strip()
+    if not cleaned:
+        return ""
+    fenced = _MARKDOWN_FENCE_RE.match(cleaned)
+    if fenced:
+        return fenced.group(1).strip()
+    return cleaned
+
+
+def _normalize_enum_name(raw_val: Any) -> str:
+    if raw_val is None:
+        return ""
+    name = getattr(raw_val, "name", None)
+    if isinstance(name, str) and name:
+        return name.upper()
+    text = str(raw_val).strip()
+    if "." in text:
+        text = text.rsplit(".", 1)[-1]
+    return text.upper()
+
+
+def _extract_finish_reason(response: Any) -> str:
+    """Safely read normalized `candidates[0].finish_reason` or `prompt_feedback.block_reason`."""
+    candidates = getattr(response, "candidates", None) or []
+    if candidates:
+        reason = _normalize_enum_name(getattr(candidates[0], "finish_reason", None))
+        if reason:
+            return reason
+    prompt_feedback = getattr(response, "prompt_feedback", None)
+    if prompt_feedback is not None:
+        block_reason = _normalize_enum_name(getattr(prompt_feedback, "block_reason", None))
+        if block_reason and block_reason != "BLOCK_REASON_UNSPECIFIED":
+            return block_reason
+    return ""
+
+
+def _truncate_prose(text: str, max_len: int) -> str:
+    if len(text) <= max_len:
+        return text
+    if max_len >= 4:
+        return text[: max_len - 3].rstrip() + "..."
+    return text[:max_len]
+
+
+def _normalize_structured_payload(schema_cls: type[BaseModel], data: Any) -> Any:
+    """Bound over-length LLM prose strings and path lists to declared Pydantic max_length caps.
+
+    Structural/pattern/enum/numeric fields (such as `item_id`, `verdict`, `dimensions`,
+    and booleans) are never altered so strict Pydantic validation still rejects bad structure.
+    """
+    if not isinstance(data, dict):
+        return data
+
+    normalized = dict(data)
+    for field_name, field_info in schema_cls.model_fields.items():
+        if field_name not in normalized:
+            continue
+        val = normalized[field_name]
+        max_len: int | None = None
+        has_pattern = False
+        for meta in field_info.metadata:
+            ml = getattr(meta, "max_length", None)
+            if isinstance(ml, int):
+                max_len = ml
+            if getattr(meta, "pattern", None) is not None:
+                has_pattern = True
+
+        annotation = field_info.annotation
+        if isinstance(val, str):
+            if max_len is not None and not has_pattern and len(val) > max_len:
+                normalized[field_name] = _truncate_prose(val, max_len)
+        elif isinstance(val, list):
+            items = val[:max_len] if (max_len is not None and len(val) > max_len) else list(val)
+            origin = get_origin(annotation)
+            args = get_args(annotation)
+            if (
+                origin is list
+                and args
+                and isinstance(args[0], type)
+                and issubclass(args[0], BaseModel)
+            ):
+                sub_model = args[0]
+                items = [
+                    _normalize_structured_payload(sub_model, elem)
+                    if isinstance(elem, dict)
+                    else elem
+                    for elem in items
+                ]
+            normalized[field_name] = items
+        elif (
+            isinstance(val, dict)
+            and isinstance(annotation, type)
+            and issubclass(annotation, BaseModel)
+        ):
+            normalized[field_name] = _normalize_structured_payload(annotation, val)
+
+    return normalized
 
 
 class RadarLLMClient(Protocol):
@@ -314,7 +480,10 @@ class GeminiRadarClient:
 
         client = genai.Client(
             api_key=self._api_key,
-            http_options=types.HttpOptions(api_version=api_version),
+            http_options=types.HttpOptions(
+                api_version=api_version,
+                timeout=LLM_HTTP_TIMEOUT_MS,
+            ),
         )
         self._clients_by_api_version[api_version] = client
         return client
@@ -350,76 +519,153 @@ class GeminiRadarClient:
         item_ids: list[str],
         max_output_tokens: int,
     ) -> tuple[TModel, LLMCallTrace]:
-        if self.cumulative_cost_usd >= self.config.max_run_cost_usd:
-            raise BudgetExceededError(
-                f"Run cost ceiling ${self.config.max_run_cost_usd:.2f} reached "
-                f"(spent ${self.cumulative_cost_usd:.4f})."
-            )
-
         api_version = "v1beta" if requires_v1beta(model_name) else "v1"
         safe_thinking = validate_thinking_level(model_name, thinking_level)
         client = self._get_client(api_version)
-        gen_config = self._build_generate_config(
-            system_instruction=system_instruction,
-            schema_cls=schema_cls,
-            thinking_level=safe_thinking,
-            max_output_tokens=max_output_tokens,
-        )
+        current_max_tokens = max_output_tokens
+        call_cost_usd = 0.0
+        total_prompt_tokens = 0
+        total_cached_tokens = 0
+        total_output_tokens = 0
+        total_thought_tokens = 0
 
-        response = None
-        last_exc: Exception | None = None
         for attempt in range(3):
+            if self.cumulative_cost_usd >= self.config.max_run_cost_usd:
+                raise BudgetExceededError(
+                    f"Run cost ceiling ${self.config.max_run_cost_usd:.2f} reached "
+                    f"(spent ${self.cumulative_cost_usd:.4f})."
+                )
+
+            gen_config = self._build_generate_config(
+                system_instruction=system_instruction,
+                schema_cls=schema_cls,
+                thinking_level=safe_thinking,
+                max_output_tokens=current_max_tokens,
+            )
+
             try:
                 response = client.models.generate_content(
                     model=model_name,
                     contents=user_content,
                     config=gen_config,
                 )
-                break
             except Exception as exc:  # noqa: BLE001
-                last_exc = exc
-                msg = redact_secrets(str(exc))
-                is_transient = any(code in msg for code in ("429", "500", "502", "503", "504"))
+                exc_name = type(exc).__name__
+                mro_names = " ".join(cls.__name__.upper() for cls in type(exc).__mro__)
+                msg = redact_secrets(str(exc)).strip()
+                detail = f"{exc_name}: {msg}" if msg else exc_name
+                upper_text = f"{mro_names} {msg.upper()}"
+                is_transient = (
+                    isinstance(exc, (TimeoutError, ConnectionError))
+                    or any(marker in upper_text for marker in _TRANSIENT_API_MARKERS)
+                    or any(
+                        kw in mro_names
+                        for kw in ("TIMEOUT", "TRANSPORTERROR", "CONNECTERROR", "REMOTEPROTOCOL")
+                    )
+                )
                 if not is_transient or attempt == 2:
-                    raise RuntimeError(f"Gemini API error ({stage}/{model_name}): {msg}") from None
+                    raise RuntimeError(f"Gemini API error ({stage}/{model_name}): {detail}") from None
                 time.sleep(1.5 * (2**attempt))
+                continue
 
-        if response is None:  # pragma: no cover
-            raise RuntimeError(
-                f"Gemini call failed without response: {redact_secrets(str(last_exc))}"
+            # Always account for billed tokens BEFORE parsing/validating so retried
+            # or malformed responses cannot bypass the deterministic USD ceiling.
+            usage = getattr(response, "usage_metadata", None)
+            prompt_tokens = int(getattr(usage, "prompt_token_count", 0) or 0)
+            cached_tokens = int(getattr(usage, "cached_content_token_count", 0) or 0)
+            output_tokens = int(getattr(usage, "candidates_token_count", 0) or 0)
+            thought_tokens = int(getattr(usage, "thoughts_token_count", 0) or 0)
+            total_prompt_tokens += prompt_tokens
+            total_cached_tokens += cached_tokens
+            total_output_tokens += output_tokens
+            total_thought_tokens += thought_tokens
+            cost = estimate_cost_usd(
+                model_name,
+                prompt_tokens=prompt_tokens,
+                cached_tokens=cached_tokens,
+                output_and_thought_tokens=output_tokens + thought_tokens,
             )
+            call_cost_usd = round(call_cost_usd + cost, 6)
+            self.cumulative_cost_usd = round(self.cumulative_cost_usd + cost, 6)
 
-        raw_text = getattr(response, "text", None) or ""
-        parsed_data = json.loads(raw_text)
-        validated = schema_cls.model_validate(parsed_data)
+            finish_reason = _extract_finish_reason(response)
+            try:
+                raw_text = getattr(response, "text", None) or ""
+            except ValueError:
+                raw_text = ""
 
-        usage = getattr(response, "usage_metadata", None)
-        prompt_tokens = int(getattr(usage, "prompt_token_count", 0) or 0)
-        cached_tokens = int(getattr(usage, "cached_content_token_count", 0) or 0)
-        output_tokens = int(getattr(usage, "candidates_token_count", 0) or 0)
-        thought_tokens = int(getattr(usage, "thoughts_token_count", 0) or 0)
-        cost = estimate_cost_usd(
-            model_name,
-            prompt_tokens=prompt_tokens,
-            cached_tokens=cached_tokens,
-            output_and_thought_tokens=output_tokens + thought_tokens,
-        )
-        self.cumulative_cost_usd = round(self.cumulative_cost_usd + cost, 6)
+            preview = redact_secrets(raw_text).replace("\r", " ").replace("\n", " ").strip()[:240]
 
-        trace = LLMCallTrace(
-            stage=stage,  # type: ignore[arg-type]
-            requested_model=model_name,
-            resolved_model_version=str(getattr(response, "model_version", "") or ""),
-            thinking_level=safe_thinking,
-            api_version=api_version,
-            prompt_tokens=prompt_tokens,
-            cached_tokens=cached_tokens,
-            output_tokens=output_tokens,
-            thought_tokens=thought_tokens,
-            estimated_cost_usd=cost,
+            if finish_reason in _NON_RETRYABLE_FINISH_REASONS:
+                raise StructuredOutputError(
+                    f"Gemini blocked structured output ({stage}/{model_name}, "
+                    f"finish_reason={finish_reason})",
+                    stage=stage,
+                    model_name=model_name,
+                    item_ids=item_ids,
+                    finish_reason=finish_reason,
+                    raw_preview=preview,
+                )
+
+            try:
+                cleaned_text = _extract_json_text(raw_text)
+                if not cleaned_text:
+                    raise ValueError(
+                        f"Empty response text (finish_reason={finish_reason or 'unknown'})"
+                    )
+                parsed_data = json.loads(cleaned_text, parse_constant=_reject_json_constant)
+                normalized_data = _normalize_structured_payload(schema_cls, parsed_data)
+                validated = schema_cls.model_validate(normalized_data)
+            except (json.JSONDecodeError, ValidationError, ValueError) as parse_exc:
+                detail = redact_secrets(str(parse_exc)).replace("\n", " ")[:240]
+                print(
+                    f"[radar][{stage}] attempt {attempt + 1}/3 structured output error "
+                    f"(model={model_name}, finish_reason={finish_reason or 'unknown'}, "
+                    f"out_tokens={output_tokens}, thought_tokens={thought_tokens}, "
+                    f"max_output_tokens={current_max_tokens}): {detail}",
+                    file=sys.stderr,
+                )
+                if attempt == 2:
+                    raise StructuredOutputError(
+                        f"Gemini structured output failed after 3 attempts ({stage}/{model_name}, "
+                        f"finish_reason={finish_reason or 'unknown'}): {detail}",
+                        stage=stage,
+                        model_name=model_name,
+                        item_ids=item_ids,
+                        finish_reason=finish_reason,
+                        raw_preview=preview,
+                    ) from None
+                if self.cumulative_cost_usd >= self.config.max_run_cost_usd:
+                    raise BudgetExceededError(
+                        f"Run cost ceiling ${self.config.max_run_cost_usd:.2f} reached "
+                        f"(spent ${self.cumulative_cost_usd:.4f})."
+                    ) from None
+                if finish_reason == "MAX_TOKENS" and current_max_tokens < MAX_STRUCTURED_OUTPUT_TOKENS:
+                    current_max_tokens = min(MAX_STRUCTURED_OUTPUT_TOKENS, current_max_tokens * 2)
+                time.sleep(1.5 * (2**attempt))
+                continue
+
+            trace = LLMCallTrace(
+                stage=stage,  # type: ignore[arg-type]
+                requested_model=model_name,
+                resolved_model_version=str(getattr(response, "model_version", "") or ""),
+                thinking_level=safe_thinking,
+                api_version=api_version,
+                prompt_tokens=total_prompt_tokens,
+                cached_tokens=total_cached_tokens,
+                output_tokens=total_output_tokens,
+                thought_tokens=total_thought_tokens,
+                estimated_cost_usd=call_cost_usd,
+                item_ids=item_ids,
+            )
+            return validated, trace
+
+        raise StructuredOutputError(  # pragma: no cover
+            f"Gemini structured output exhausted retries ({stage}/{model_name})",
+            stage=stage,
+            model_name=model_name,
             item_ids=item_ids,
         )
-        return validated, trace
 
     def triage_stage1_batch(
         self,
@@ -436,7 +682,7 @@ class GeminiRadarClient:
             user_content=user_payload,
             schema_cls=Stage1BatchResponse,
             item_ids=[i.item_id for i in items],
-            max_output_tokens=4096,
+            max_output_tokens=STAGE1_MAX_OUTPUT_TOKENS,
         )
 
     def analyze_stage2_survivor(
@@ -456,7 +702,7 @@ class GeminiRadarClient:
             user_content=user_payload,
             schema_cls=Stage2Analysis,
             item_ids=[item.item_id],
-            max_output_tokens=4096,
+            max_output_tokens=STAGE2_MAX_OUTPUT_TOKENS,
         )
 
     def evaluate_stage3_coherence(
@@ -476,5 +722,5 @@ class GeminiRadarClient:
             user_content=user_payload,
             schema_cls=Stage3CoherenceVerdict,
             item_ids=[c.item_id for c in candidates],
-            max_output_tokens=8192,
+            max_output_tokens=STAGE3_MAX_OUTPUT_TOKENS,
         )
