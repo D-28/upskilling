@@ -144,6 +144,14 @@
       "title_hash": "2ee6fd9a5481",
       "verdict": "BOOTSTRAP_SEEDED"
     },
+    "3f91feb8f2aa": {
+      "canonical_url": "https://github.com/openai/codex/releases/tag/rust-v0.174.0-alpha.3",
+      "content_hash": "",
+      "feed_id": "openai-codex-releases",
+      "first_seen_at": "2026-11-24T22:57:31.250535+00:00",
+      "title_hash": "f227d0722f15",
+      "verdict": "NO_WORKFLOW_DELTA"
+    },
     "470a905d1d5d": {
       "canonical_url": "https://github.com/openai/codex/releases/tag/rust-v0.172.0-alpha.2.1",
       "content_hash": "",
@@ -224,6 +232,14 @@
       "title_hash": "7dc58de858db",
       "verdict": "BOOTSTRAP_SEEDED"
     },
+    "7758c04a6293": {
+      "canonical_url": "https://openai.com/index/searching-for-distant-planets-with-astra",
+      "content_hash": "c069b4696581",
+      "feed_id": "openai-news",
+      "first_seen_at": "2026-11-24T22:57:31.250535+00:00",
+      "title_hash": "a703d13085ee",
+      "verdict": "MODEL_RELEASE_FLUFF"
+    },
     "7eea171611f3": {
       "canonical_url": "https://simonwillison.net/2026/Nov/24/astra-historical-mystery",
       "content_hash": "337cbb0e75bc",
@@ -279,6 +295,14 @@
       "first_seen_at": "2026-11-24T17:19:24.307049+00:00",
       "title_hash": "7d0f71154fe4",
       "verdict": "NO_WORKFLOW_DELTA"
+    },
+    "89a905d5eae9": {
+      "canonical_url": "https://openai.com/business/customer-stories/ifood",
+      "content_hash": "",
+      "feed_id": "openai-news",
+      "first_seen_at": "2026-11-24T22:57:31.250535+00:00",
+      "title_hash": "0ddcf16ba0dc",
+      "verdict": "MARKETING_REBRAND"
     },
     "8a62ea05f675": {
       "canonical_url": "https://simonwillison.net/2026/Nov/23/datasette-charts",
@@ -392,6 +416,14 @@
       "title_hash": "a44d3e58e3ee",
       "verdict": "BOOTSTRAP_SEEDED"
     },
+    "b65bdd42b1e8": {
+      "canonical_url": "https://github.com/openai/codex/releases/tag/rust-v0.174.0-alpha.4",
+      "content_hash": "",
+      "feed_id": "openai-codex-releases",
+      "first_seen_at": "2026-11-24T22:57:31.250535+00:00",
+      "title_hash": "e0db8c9f2ecc",
+      "verdict": "NO_WORKFLOW_DELTA"
+    },
     "c1a2af93db54": {
       "canonical_url": "https://openai.com/index/introducing-medchembench",
       "content_hash": "e9d986616656",
@@ -466,5 +498,5 @@
     }
   },
   "schema_version": 1,
-  "updated_at": "2026-11-24T17:19:24.307049+00:00"
+  "updated_at": "2026-11-24T22:57:31.250535+00:00"
 }
