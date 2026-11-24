@@ -74,6 +74,7 @@ Don't read the repo front-to-back like a textbook—build the core mental frame 
 | **[`skills/diff-review/SKILL.md`](skills/diff-review/SKILL.md)** | Base-branch `REVIEW.md` + diff-triggered checklist reviewer | B |
 | **[`skills/ste-clarity/SKILL.md`](skills/ste-clarity/SKILL.md)** | Two-way `STE-80` clarity & Karpathy's 4-Level Understanding Ladder (`text → diagram → HTML → animation`) | H, B, C |
 | **[`scripts/ste_lint.py`](scripts/ste_lint.py)** | Deterministic `STE-80` linter (`--stats`, `--check`, `--json`) for `AGENTS.md` and `SKILL.md` | H, C, D |
+| **[`scripts/install-skills.sh`](scripts/install-skills.sh)** | Cross-machine, idempotent installer (symlink or `--copy`) for `skills/*/` across Antigravity, Copilot CLI, Claude Code, and custom `--target` paths | Portability |
 | **[`templates/AGENTS.md.template`](templates/AGENTS.md.template)** | Lean root map, `done_when` contract, "Write It Twice" table, `STE-80` output contract | B, C, H |
 | **[`templates/REVIEW.md.template`](templates/REVIEW.md.template)** | Base-branch rubric, diff-triggered checks (incl. `STE-80` rule checkability), empirical promotion | B, H |
 | **[`templates/GLOSSARY-and-ADR.md`](templates/GLOSSARY-and-ADR.md)** | Domain glossary (ASD-STE100 Rule 1.11), lightweight ADR, and tracer-bullet ticket formats | G, H |
@@ -98,9 +99,26 @@ The AI tooling landscape moves quickly. To keep this repo useful six months from
 
 ## Cross-Tool Portability Quickstart (`skills/`)
 
-All skills under `skills/` follow the open **Agent Skills (`SKILL.md`)** directory convention so you can pull this repo once and reuse them across tools:
+All skills under `skills/` follow the open **Agent Skills (`SKILL.md`)** directory convention so you can pull this repo once and install them across tools with [`scripts/install-skills.sh`](scripts/install-skills.sh) (macOS + Linux compatible, idempotent):
 
-- **Antigravity:** Copy or symlink `skills/<skill-name>` into your project's skills directory or global agent skills directory (and pair `grill-to-spec` concepts with `/grill-me` and `/plan`, or `verify` with `/goal`).
-- **GitHub Copilot CLI:** Copy or symlink `skills/<skill-name>` into `.github/skills/<skill-name>` (repo-scoped) or `~/.copilot/skills/<skill-name>` (user-scoped).
-- **Claude Code:** Copy or symlink `skills/<skill-name>` into `.claude/skills/<skill-name>` (repo-scoped) or `~/.claude/skills/<skill-name>` (user-scoped).
-- **Codex:** Reference `templates/AGENTS.md.template` as root `AGENTS.md` and load skills from your local skills directory.
+```bash
+# Preview what will be symlinked (Antigravity, Copilot CLI, and Claude Code)
+./scripts/install-skills.sh --dry-run
+
+# Symlink all skills into user-level tool directories (default: --scope user --tool all)
+./scripts/install-skills.sh
+
+# Install into a specific project repo (.agent/skills, .github/skills, .claude/skills)
+./scripts/install-skills.sh --scope repo --repo-root /path/to/repo --tool copilot --tool claude
+
+# Copy instead of symlinking, or install to a custom directory (e.g. Codex)
+./scripts/install-skills.sh --copy --target ~/.codex/skills
+
+# Cleanly remove symlinks and managed copies created by this repo
+./scripts/install-skills.sh --uninstall
+```
+
+- **Antigravity:** `~/.gemini/jetski/skills/<skill>` (user) or `.agent/skills/<skill>` (repo) — pair `grill-to-spec` with `/grill-me` and `/plan`, or `verify` with `/goal`.
+- **GitHub Copilot CLI:** `~/.copilot/skills/<skill>` (user) or `.github/skills/<skill>` (repo).
+- **Claude Code:** `~/.claude/skills/<skill>` (user) or `.claude/skills/<skill>` (repo).
+- **Codex / other tools:** Pass `--target <dir>` (or `--dir <dir>`), and reference `templates/AGENTS.md.template` as root `AGENTS.md`.
