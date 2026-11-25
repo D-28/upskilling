@@ -92,7 +92,7 @@ Spec & vertical tickets: [`docs/specs/coherence-gate-and-fast-lane.md`](docs/spe
 - [ ] Track whether programmatic tool execution (**Code Mode** `[D]`) exits experimental status, expands beyond interactive CLI to IDE/SDK/Bedrock/Vertex/ZDR, or sees first-party adoption in GitHub Copilot CLI and Codex.
 - [ ] Evaluate real-world reliability of long-running background loops (`/loop` `[C]`, `/goal`, Code Mode background scripts `[D]`) vs. structured `run_workflow` / `swarm` graphs.
 - [ ] Watch for open standards converging around `SKILL.md`, hooks, and MCP tool-output filtering.
-- [ ] **Tool evaluation — `https://sous.io/markdown/#/`:** Research what problem it solves and assess whether it offers practical merit or is redundant given late-2026 model capabilities and modern agent harnesses.
+- [x] **Tool evaluation — `https://sous.io/markdown/#/` ([`sous-io/sous`](https://github.com/sous-io/sous)):** Evaluated (`2026-11-20`) — **Skip for now.** It is a pre-flight template compiler (LiquidJS + lockfiles) for agent config, not a runtime harness/loop tool; today it is solo-maintained (3 stars, Linux + Claude Code only), its gitignored outputs break base-branch CI and cloud agents, and global user-scoped skills + runtime discovery already fit personal and customer repos better. *When it (or a Copier-style equivalent) could pay off one day:* governing **10+ org-owned repos** with varying stacks, compliance tiers (e.g., HIPAA), or harnesses—to deterministically strip irrelevant context at build time, push version-pinned rule/hook updates without copy-paste drift, and emit per-harness formats from one source (ideally with **committed rendered outputs + a CI drift check**).
 
 ---
 
