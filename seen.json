@@ -176,6 +176,14 @@
       "title_hash": "08e496757396",
       "verdict": "BOOTSTRAP_SEEDED"
     },
+    "5020bac089b7": {
+      "canonical_url": "https://github.com/openai/codex/releases/tag/rust-v0.174.0-alpha.5",
+      "content_hash": "",
+      "feed_id": "openai-codex-releases",
+      "first_seen_at": "2026-11-25T22:16:45.346467+00:00",
+      "title_hash": "80fec32d2dca",
+      "verdict": "MODEL_RELEASE_FLUFF"
+    },
     "57e7781a892d": {
       "canonical_url": "https://github.blog/changelog/2026-11-17-openais-gpt-6-2-astra-and-gpt-6-2-sol-now-available",
       "content_hash": "b770273f966a",
@@ -192,6 +200,14 @@
       "title_hash": "8f955b1d1b05",
       "verdict": "NO_WORKFLOW_DELTA"
     },
+    "5e8eba5b15ac": {
+      "canonical_url": "https://simonwillison.net/2026/Nov/24/llm-inflection-points",
+      "content_hash": "206952115e4a",
+      "feed_id": "simon-willison",
+      "first_seen_at": "2026-11-25T22:16:45.346467+00:00",
+      "title_hash": "837e66144e57",
+      "verdict": "NO_WORKFLOW_DELTA"
+    },
     "5fdd743e62a3": {
       "canonical_url": "https://github.com/openai/codex/releases/tag/rust-v0.173.0-alpha.5",
       "content_hash": "",
@@ -199,6 +215,22 @@
       "first_seen_at": "2026-11-24T17:19:24.307049+00:00",
       "title_hash": "af17b59cc66b",
       "verdict": "MODEL_RELEASE_FLUFF"
+    },
+    "616293296550": {
+      "canonical_url": "https://deepmind.google/blog/interpreting-mass-spectra-with-google-antigravity",
+      "content_hash": "",
+      "feed_id": "google-deepmind-blog",
+      "first_seen_at": "2026-11-25T22:16:45.346467+00:00",
+      "title_hash": "59edebcebb63",
+      "verdict": "MARKETING_REBRAND"
+    },
+    "69fbec9981f8": {
+      "canonical_url": "https://www.anthropic.com/research/migrating-api-to-rust",
+      "content_hash": "",
+      "feed_id": "anthropic-engineering",
+      "first_seen_at": "2026-11-25T22:16:45.346467+00:00",
+      "title_hash": "c019d837de73",
+      "verdict": "NO_WORKFLOW_DELTA"
     },
     "6b2d356ac9f7": {
       "canonical_url": "https://simonwillison.net/2026/Nov/18/datasette-arrows",
@@ -368,12 +400,28 @@
       "title_hash": "38e130ceedc6",
       "verdict": "NO_WORKFLOW_DELTA"
     },
+    "9af1b59be582": {
+      "canonical_url": "https://github.com/openai/codex/releases/tag/rust-v0.174.0-alpha.6",
+      "content_hash": "",
+      "feed_id": "openai-codex-releases",
+      "first_seen_at": "2026-11-25T22:16:45.346467+00:00",
+      "title_hash": "3dbf2345ae69",
+      "verdict": "MODEL_RELEASE_FLUFF"
+    },
     "9e90f9c09471": {
       "canonical_url": "https://github.com/gulivan/worker755",
       "content_hash": "",
       "feed_id": "hn-agentic",
       "first_seen_at": "2026-11-22T20:14:25.223071+00:00",
       "title_hash": "6c597fc51213",
+      "verdict": "MARKETING_REBRAND"
+    },
+    "a3c9028eefd6": {
+      "canonical_url": "https://openai.com/business/customer-stories/clay-plugins-openai",
+      "content_hash": "9c9583520ad1",
+      "feed_id": "openai-news",
+      "first_seen_at": "2026-11-25T22:16:45.346467+00:00",
+      "title_hash": "1111b8ff58ac",
       "verdict": "MARKETING_REBRAND"
     },
     "a8c812cefc0f": {
@@ -431,6 +479,14 @@
       "first_seen_at": "2026-11-21T05:01:36.109769+00:00",
       "title_hash": "67e152403a4d",
       "verdict": "BOOTSTRAP_SEEDED"
+    },
+    "d1a8a8c302ae": {
+      "canonical_url": "https://github.com/anthropics/claude-code/releases/tag/v2.1.332",
+      "content_hash": "48b8b81b9c31",
+      "feed_id": "claude-code-releases",
+      "first_seen_at": "2026-11-25T22:16:45.346467+00:00",
+      "title_hash": "b6594102d52e",
+      "verdict": "ALREADY_COVERED"
     },
     "e2c2e0af508d": {
       "canonical_url": "https://github.com/openai/codex/releases/tag/rust-v0.174.0-alpha.2",
@@ -498,5 +554,5 @@
     }
   },
   "schema_version": 1,
-  "updated_at": "2026-11-24T22:57:31.250535+00:00"
+  "updated_at": "2026-11-25T22:16:45.346467+00:00"
 }

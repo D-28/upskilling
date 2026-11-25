@@ -7,7 +7,7 @@
       "items_fetched": 0,
       "last_error": "",
       "last_merged_at": "",
-      "last_success_at": "2026-11-24T22:57:31.250535+00:00",
+      "last_success_at": "2026-11-25T22:16:45.346467+00:00",
       "stage1_survivors": 0,
       "stage2_staged": 0
     },
@@ -15,10 +15,10 @@
       "consecutive_fetch_errors": 0,
       "human_closed_rejected": 0,
       "human_merged": 0,
-      "items_fetched": 1,
+      "items_fetched": 2,
       "last_error": "",
       "last_merged_at": "",
-      "last_success_at": "2026-11-24T22:57:31.250535+00:00",
+      "last_success_at": "2026-11-25T22:16:45.346467+00:00",
       "stage1_survivors": 0,
       "stage2_staged": 0
     },
@@ -26,10 +26,10 @@
       "consecutive_fetch_errors": 0,
       "human_closed_rejected": 0,
       "human_merged": 0,
-      "items_fetched": 9,
+      "items_fetched": 10,
       "last_error": "",
       "last_merged_at": "",
-      "last_success_at": "2026-11-24T22:57:31.250535+00:00",
+      "last_success_at": "2026-11-25T22:16:45.346467+00:00",
       "stage1_survivors": 0,
       "stage2_staged": 0
     },
@@ -51,7 +51,7 @@
       "items_fetched": 5,
       "last_error": "",
       "last_merged_at": "",
-      "last_success_at": "2026-11-24T22:57:31.250535+00:00",
+      "last_success_at": "2026-11-25T22:16:45.346467+00:00",
       "stage1_survivors": 0,
       "stage2_staged": 0
     },
@@ -59,10 +59,10 @@
       "consecutive_fetch_errors": 0,
       "human_closed_rejected": 0,
       "human_merged": 0,
-      "items_fetched": 2,
+      "items_fetched": 3,
       "last_error": "",
       "last_merged_at": "",
-      "last_success_at": "2026-11-24T22:57:31.250535+00:00",
+      "last_success_at": "2026-11-25T22:16:45.346467+00:00",
       "stage1_survivors": 0,
       "stage2_staged": 0
     },
@@ -73,7 +73,7 @@
       "items_fetched": 5,
       "last_error": "",
       "last_merged_at": "",
-      "last_success_at": "2026-11-24T22:57:31.250535+00:00",
+      "last_success_at": "2026-11-25T22:16:45.346467+00:00",
       "stage1_survivors": 0,
       "stage2_staged": 0
     },
@@ -84,7 +84,7 @@
       "items_fetched": 0,
       "last_error": "",
       "last_merged_at": "",
-      "last_success_at": "2026-11-24T22:57:31.250535+00:00",
+      "last_success_at": "2026-11-25T22:16:45.346467+00:00",
       "stage1_survivors": 0,
       "stage2_staged": 0
     },
@@ -95,7 +95,7 @@
       "items_fetched": 0,
       "last_error": "",
       "last_merged_at": "",
-      "last_success_at": "2026-11-24T22:57:31.250535+00:00",
+      "last_success_at": "2026-11-25T22:16:45.346467+00:00",
       "stage1_survivors": 0,
       "stage2_staged": 0
     },
@@ -103,10 +103,10 @@
       "consecutive_fetch_errors": 0,
       "human_closed_rejected": 0,
       "human_merged": 0,
-      "items_fetched": 18,
+      "items_fetched": 20,
       "last_error": "",
       "last_merged_at": "",
-      "last_success_at": "2026-11-24T22:57:31.250535+00:00",
+      "last_success_at": "2026-11-25T22:16:45.346467+00:00",
       "stage1_survivors": 0,
       "stage2_staged": 0
     },
@@ -114,10 +114,10 @@
       "consecutive_fetch_errors": 0,
       "human_closed_rejected": 0,
       "human_merged": 0,
-      "items_fetched": 8,
+      "items_fetched": 9,
       "last_error": "",
       "last_merged_at": "",
-      "last_success_at": "2026-11-24T22:57:31.250535+00:00",
+      "last_success_at": "2026-11-25T22:16:45.346467+00:00",
       "stage1_survivors": 0,
       "stage2_staged": 0
     },
@@ -125,10 +125,10 @@
       "consecutive_fetch_errors": 0,
       "human_closed_rejected": 0,
       "human_merged": 0,
-      "items_fetched": 13,
+      "items_fetched": 14,
       "last_error": "",
       "last_merged_at": "",
-      "last_success_at": "2026-11-24T22:57:31.250535+00:00",
+      "last_success_at": "2026-11-25T22:16:45.346467+00:00",
       "stage1_survivors": 0,
       "stage2_staged": 0
     }
@@ -136,5 +136,5 @@
   "reconciled_prs": [],
   "schema_version": 1,
   "unsubscribed_domain_hits": {},
-  "updated_at": "2026-11-24T22:57:31.250535+00:00"
+  "updated_at": "2026-11-25T22:16:45.346467+00:00"
 }
