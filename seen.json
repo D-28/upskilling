@@ -224,6 +224,14 @@
       "title_hash": "59edebcebb63",
       "verdict": "MARKETING_REBRAND"
     },
+    "69c0601d70f9": {
+      "canonical_url": "https://github.blog/changelog/2026-11-25-copilot-code-review-billing-will-default-to-the-organization",
+      "content_hash": "88b3a0fd88a2",
+      "feed_id": "github-copilot-changelog",
+      "first_seen_at": "2026-11-26T22:12:14.856761+00:00",
+      "title_hash": "faa23b3bddbb",
+      "verdict": "NO_WORKFLOW_DELTA"
+    },
     "69fbec9981f8": {
       "canonical_url": "https://www.anthropic.com/research/migrating-api-to-rust",
       "content_hash": "",
@@ -392,12 +400,28 @@
       "title_hash": "1ee26324e5d4",
       "verdict": "BOOTSTRAP_SEEDED"
     },
+    "968543292084": {
+      "canonical_url": "https://simonwillison.net/2026/Nov/25/datasette-charts",
+      "content_hash": "da683499f034",
+      "feed_id": "simon-willison",
+      "first_seen_at": "2026-11-26T22:12:14.856761+00:00",
+      "title_hash": "1ad43239d361",
+      "verdict": "NO_WORKFLOW_DELTA"
+    },
     "981d6178a1cb": {
       "canonical_url": "https://simonwillison.net/2026/Nov/23/ladybird",
       "content_hash": "9f3114b4a7cf",
       "feed_id": "simon-willison",
       "first_seen_at": "2026-11-24T17:19:24.307049+00:00",
       "title_hash": "38e130ceedc6",
+      "verdict": "NO_WORKFLOW_DELTA"
+    },
+    "9a36b64e1e92": {
+      "canonical_url": "https://techstackups.com/articles/google-workspace-ai-agents-mcp",
+      "content_hash": "",
+      "feed_id": "hn-agentic",
+      "first_seen_at": "2026-11-26T22:12:14.856761+00:00",
+      "title_hash": "f267fe1e1494",
       "verdict": "NO_WORKFLOW_DELTA"
     },
     "9af1b59be582": {
@@ -471,6 +495,22 @@
       "first_seen_at": "2026-11-24T22:57:31.250535+00:00",
       "title_hash": "e0db8c9f2ecc",
       "verdict": "NO_WORKFLOW_DELTA"
+    },
+    "b7dfea651eb9": {
+      "canonical_url": "https://github.com/openai/codex/releases/tag/rust-v0.174.0-alpha.8",
+      "content_hash": "",
+      "feed_id": "openai-codex-releases",
+      "first_seen_at": "2026-11-26T22:12:14.856761+00:00",
+      "title_hash": "402d40b26b54",
+      "verdict": "MODEL_RELEASE_FLUFF"
+    },
+    "c19aa18de1b8": {
+      "canonical_url": "https://github.com/openai/codex/releases/tag/rust-v0.174.0-alpha.7",
+      "content_hash": "",
+      "feed_id": "openai-codex-releases",
+      "first_seen_at": "2026-11-26T22:12:14.856761+00:00",
+      "title_hash": "efd8196ddcac",
+      "verdict": "MODEL_RELEASE_FLUFF"
     },
     "c1a2af93db54": {
       "canonical_url": "https://openai.com/index/introducing-medchembench",
@@ -554,5 +594,5 @@
     }
   },
   "schema_version": 1,
-  "updated_at": "2026-11-25T22:16:45.346467+00:00"
+  "updated_at": "2026-11-26T22:12:14.856761+00:00"
 }
