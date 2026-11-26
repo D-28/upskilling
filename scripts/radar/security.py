@@ -175,7 +175,9 @@ def redact_secrets(text: str) -> str:
 class _SafeTextHTMLParser(HTMLParser):
     """Minimal stdlib HTML-to-text extractor that drops script/style/noscript blocks."""
 
-    _SKIP_TAGS = frozenset({"script", "style", "noscript", "svg", "iframe", "object", "embed"})
+    _SKIP_TAGS = frozenset(
+        {"script", "style", "noscript", "svg", "iframe", "object", "embed", "template"}
+    )
     _BLOCK_TAGS = frozenset(
         {"p", "div", "br", "li", "h1", "h2", "h3", "h4", "h5", "h6", "tr", "pre", "blockquote"}
     )

@@ -50,6 +50,7 @@ from scripts.radar.models import (
     FeedFetchSummary,
     FeedRegistry,
     SeenState,
+    SourceClass,
 )
 from scripts.radar.security import (
     SSRFError,
@@ -84,6 +85,16 @@ _TRACKING_PARAMS = frozenset(
 )
 
 _SEMVER_RE = re.compile(r"\bv?(\d+)\.(\d+)\.(\d+)(?:[-+][A-Za-z0-9.\-]+)?\b")
+_PRERELEASE_SEMVER_RE = re.compile(
+    r"\bv?\d+\.\d+\.\d+-[A-Za-z0-9][A-Za-z0-9.\-]*",
+    re.IGNORECASE,
+)
+_PRERELEASE_TAG_RE = re.compile(
+    r"-(?:alpha|beta|rc|dev|canary|nightly|preview)(?:[.\-_]?\d+|\b)",
+    re.IGNORECASE,
+)
+_SINGLE_WORD_KW_RE = re.compile(r"^[a-z0-9]+$")
+
 _BOT_WALL_PATTERNS = (
     "verify you are human",
     "attention required! | cloudflare",
@@ -93,13 +104,15 @@ _BOT_WALL_PATTERNS = (
     "hcaptcha",
     "just a moment...",
 )
-_LOGIN_OR_PAYWALL_PATTERNS = (
+_JS_OR_LOGIN_STUB_PATTERNS = (
     "javascript is not available",
     "we've detected that javascript is disabled",
     "we’ve detected that javascript is disabled",
     "please enable javascript",
     "log in to x",
     "sign in to x",
+)
+_PAYWALL_TRUNCATION_PATTERNS = (
     "sign in to continue reading",
     "log in to continue reading",
     "subscribe to continue reading",
@@ -107,10 +120,165 @@ _LOGIN_OR_PAYWALL_PATTERNS = (
     "create an account to read the full story",
     "members-only story",
 )
+_LOGIN_OR_PAYWALL_PATTERNS = _JS_OR_LOGIN_STUB_PATTERNS + _PAYWALL_TRUNCATION_PATTERNS
+_WALL_TITLES = frozenset(
+    {
+        "just a moment...",
+        "attention required! | cloudflare",
+        "javascript is not available",
+        "javascript is not available.",
+        "log in to x",
+        "sign in",
+        "login",
+        "verify you are human",
+    }
+)
+_INTERSTITIAL_THIN_CHARS = 1_500
+_INTERSTITIAL_THIN_WORDS = 250
+
 MIN_FAST_LANE_CHARS = 600
 MIN_FAST_LANE_WORDS = 100
 MAX_PLAN_B_FETCHES = 3
 _X_STATUS_DOMAINS = frozenset({"x.com", "twitter.com", "mobile.twitter.com"})
+_X_RESERVED_PATHS = frozenset(
+    {
+        "i",
+        "intent",
+        "search",
+        "home",
+        "explore",
+        "hashtag",
+        "share",
+        "compose",
+        "messages",
+        "notifications",
+        "settings",
+        "login",
+        "signup",
+        "tos",
+        "privacy",
+    }
+)
+_GITHUB_RESERVED_PREFIXES = frozenset(
+    {
+        "topics",
+        "explore",
+        "trending",
+        "collections",
+        "events",
+        "features",
+        "marketplace",
+        "search",
+        "settings",
+        "orgs",
+        "enterprise",
+        "pricing",
+        "about",
+        "login",
+        "signup",
+        "pulls",
+        "issues",
+        "notifications",
+        "sponsors",
+    }
+)
+_GIST_RESERVED_PREFIXES = frozenset(
+    {"discover", "starred", "forked", "search", "login", "join"}
+)
+_DEVTO_RESERVED_PATHS = frozenset(
+    {
+        "t",
+        "top",
+        "latest",
+        "tags",
+        "search",
+        "listings",
+        "podcasts",
+        "videos",
+        "about",
+        "contact",
+        "faq",
+        "enter",
+        "settings",
+        "readinglist",
+        "notifications",
+        "dashboard",
+        "feed",
+    }
+)
+_ONE_OFF_ARTIFACT_HOSTS = frozenset(
+    {
+        "raw.githubusercontent.com",
+        "gist.github.com",
+        "news.ycombinator.com",
+        "arxiv.org",
+        "youtube.com",
+        "m.youtube.com",
+        "youtu.be",
+        "x.com",
+        "twitter.com",
+        "mobile.twitter.com",
+    }
+)
+_FEED_MIME_TYPES = frozenset(
+    {
+        "application/rss+xml",
+        "application/atom+xml",
+        "application/feed+json",
+    }
+)
+_BINARY_EXTENSIONS = frozenset(
+    {
+        ".png",
+        ".jpg",
+        ".jpeg",
+        ".gif",
+        ".webp",
+        ".bmp",
+        ".ico",
+        ".svg",
+        ".pdf",
+        ".zip",
+        ".tar",
+        ".gz",
+        ".tgz",
+        ".bz2",
+        ".xz",
+        ".7z",
+        ".rar",
+        ".woff",
+        ".woff2",
+        ".ttf",
+        ".otf",
+        ".eot",
+        ".mp3",
+        ".mp4",
+        ".mov",
+        ".avi",
+        ".mkv",
+        ".wav",
+        ".ogg",
+        ".exe",
+        ".dll",
+        ".so",
+        ".dylib",
+        ".bin",
+        ".wasm",
+        ".pyc",
+        ".class",
+        ".jar",
+        ".dmg",
+        ".iso",
+        ".sqlite",
+        ".db",
+        ".parquet",
+        ".arrow",
+        ".pt",
+        ".pth",
+        ".onnx",
+        ".safetensors",
+    }
+)
 _X_INTERNAL_DOMAINS = frozenset(
     {
         "x.com",
@@ -274,6 +442,133 @@ def extract_domain(url: str) -> str:
     return host
 
 
+def normalize_source_key(key: str) -> str:
+    """Normalize a canonical source key or domain string."""
+    cleaned = key.strip().lower().rstrip("/")
+    if cleaned.startswith("www."):
+        cleaned = cleaned[4:]
+    return cleaned
+
+
+def extract_source_key(url: str) -> str:
+    """Extract canonical scoped source key from any URL ($0 LLM, 0 HTTP).
+
+    Scopes shared hosts (`github.com`, `raw.githubusercontent.com`, `gist.github.com`,
+    `x.com`/`twitter.com`, `medium.com`, `substack.com`, `dev.to`) to owner/repo or author.
+    """
+    raw = url.strip()
+    parsed = urlparse(raw)
+    host = extract_domain(raw)
+    if not host:
+        return ""
+    segs = [s for s in (parsed.path or "").split("/") if s]
+
+    if host in ("github.com", "raw.githubusercontent.com"):
+        if len(segs) >= 2 and segs[0].lower() not in _GITHUB_RESERVED_PREFIXES:
+            owner = segs[0].lower()
+            repo = segs[1].lower().removesuffix(".git") or segs[1].lower()
+            return f"github.com/{owner}/{repo}"
+        return "github.com"
+
+    if host == "gist.github.com":
+        if len(segs) >= 1 and segs[0].lower() not in _GIST_RESERVED_PREFIXES:
+            return f"gist.github.com/{segs[0].lower()}"
+        return "gist.github.com"
+
+    if host in _X_STATUS_DOMAINS:
+        if len(segs) >= 1:
+            handle = segs[0].lstrip("@").lower()
+            if handle and handle not in _X_RESERVED_PATHS:
+                return f"x.com/@{handle}"
+        return "x.com"
+
+    if host == "medium.com":
+        if len(segs) >= 1 and segs[0].startswith("@") and len(segs[0]) > 1:
+            return f"medium.com/{segs[0].lower()}"
+        if len(segs) >= 2 and segs[0].lower() == "feed" and segs[1].startswith("@") and len(segs[1]) > 1:
+            return f"medium.com/{segs[1].lower()}"
+        return "medium.com"
+
+    if host == "substack.com":
+        if len(segs) >= 1 and segs[0].startswith("@") and len(segs[0]) > 1:
+            return f"substack.com/{segs[0].lower()}"
+        return "substack.com"
+
+    if host == "dev.to":
+        if len(segs) >= 1 and segs[0].lower() not in _DEVTO_RESERVED_PATHS:
+            return f"dev.to/{segs[0].lower()}"
+        return "dev.to"
+
+    return host
+
+
+def classify_source(url: str) -> SourceClass:
+    """Classify a URL deterministically as `serial_publisher` or `one_off_artifact`."""
+    raw = url.strip()
+    parsed = urlparse(raw)
+    host = extract_domain(raw)
+    segs = [s for s in (parsed.path or "").split("/") if s]
+
+    if host == "github.com":
+        if (
+            len(segs) >= 3
+            and segs[0].lower() not in _GITHUB_RESERVED_PREFIXES
+            and (segs[2].lower() == "releases" or segs[2].lower().startswith("releases."))
+        ):
+            return "serial_publisher"
+        return "one_off_artifact"
+
+    if host in _ONE_OFF_ARTIFACT_HOSTS:
+        return "one_off_artifact"
+
+    return "serial_publisher"
+
+
+def classify_source_key(source_key: str, canonical_url: str = "") -> SourceClass:
+    """Classify a source key, preferring full `canonical_url` when available."""
+    if canonical_url:
+        return classify_source(canonical_url)
+    norm = normalize_source_key(source_key)
+    host = norm.split("/", 1)[0]
+    if host == "github.com" or host in _ONE_OFF_ARTIFACT_HOSTS:
+        return "one_off_artifact"
+    return "serial_publisher"
+
+
+def resolve_feed_hint(source_key: str, discovered_feed_url: str = "") -> str:
+    """Return discovered HTML feed URL, or a deterministic fallback feed hint when applicable."""
+    if discovered_feed_url and discovered_feed_url.strip():
+        return discovered_feed_url.strip()
+    norm = normalize_source_key(source_key)
+    if norm.startswith("medium.com/@"):
+        author = norm.removeprefix("medium.com/")
+        return f"https://medium.com/feed/{author}"
+    parts = norm.split("/")
+    if len(parts) == 3 and parts[0] == "github.com" and parts[1] and parts[2]:
+        return f"https://github.com/{parts[1]}/{parts[2]}/releases.atom"
+    return ""
+
+
+def subscribed_source_keys(registry: FeedRegistry) -> set[str]:
+    """Return the normalized set of subscribed source keys and configured `source_domains`."""
+    keys: set[str] = set()
+    for feed in registry.feeds:
+        feed_key = extract_source_key(feed.url)
+        if feed_key:
+            keys.add(feed_key)
+        for alias in feed.source_domains:
+            norm_alias = normalize_source_key(alias)
+            if norm_alias:
+                keys.add(norm_alias)
+    return keys
+
+
+def is_source_subscribed(source_key: str, subscribed: set[str]) -> bool:
+    """Return True if `source_key` matches an already-subscribed feed or alias."""
+    norm = normalize_source_key(source_key)
+    return bool(norm) and norm in subscribed
+
+
 def parse_timestamp(raw: str | None) -> datetime | None:
     """Parse ISO-8601 or RFC-2822 timestamps into UTC datetimes."""
     if not raw or not raw.strip():
@@ -300,12 +595,34 @@ def is_patch_only_semver(text: str) -> bool:
     return int(m.group(3)) > 0
 
 
+def is_prerelease_version(title: str, url: str = "") -> bool:
+    """Return True if a release title or GitHub release tag represents a pre-release."""
+    if _PRERELEASE_SEMVER_RE.search(title) or _PRERELEASE_TAG_RE.search(title):
+        return True
+    if url:
+        parts = [p for p in (urlparse(url).path or "").split("/") if p]
+        if len(parts) >= 2 and parts[-2].lower() == "tag":
+            tag = parts[-1]
+            if _PRERELEASE_SEMVER_RE.search(tag) or _PRERELEASE_TAG_RE.search(tag):
+                return True
+    return False
+
+
 def matches_keywords(text: str, keywords: list[str]) -> bool:
-    """Case-insensitive substring match against a keyword list."""
+    """Case-insensitive keyword match using exact word boundaries for single-word tokens."""
     if not keywords:
         return True
     haystack = text.lower()
-    return any(kw.lower() in haystack for kw in keywords)
+    for kw in keywords:
+        token = kw.strip().lower()
+        if not token:
+            continue
+        if _SINGLE_WORD_KW_RE.match(token):
+            if re.search(rf"\b{re.escape(token)}\b", haystack):
+                return True
+        elif token in haystack:
+            return True
+    return False
 
 
 def load_feed_registry(feeds_path: Path) -> FeedRegistry:
@@ -394,16 +711,24 @@ def _extract_rss_item(item: ET.Element) -> dict[str, str] | None:
     return None
 
 
-def parse_rss_or_atom(xml_bytes: bytes, feed: FeedEntry) -> list[dict[str, str]]:
+def parse_rss_or_atom(
+    xml_bytes: bytes,
+    feed: FeedEntry,
+    *,
+    max_scan: int | None = None,
+) -> list[dict[str, str]]:
     """Incrementally parse RSS 2.0 or Atom XML with DTD/ENTITY guard and early-stop resilience.
 
-    Stops reading as soon as `feed.max_items` complete `<item>` or `<entry>` blocks are
-    collected. If a multi-megabyte feed is truncated at `MAX_FEED_BYTES` after at least one
-    complete item has been parsed, returns the complete items instead of failing the feed.
+    Scans up to `max_scan` (default `max(feed.max_items * 5, 50)`) complete `<item>` or
+    `<entry>` blocks so alpha/patch bursts do not push recent stable entries out of the window
+    before `fetch_candidates` applies `feed.max_items` to eligible candidates. If a large feed
+    is truncated at `MAX_FEED_BYTES` after at least one complete item has been parsed, returns
+    the complete items instead of failing the feed.
     """
     xml_bytes = decompress_if_gzipped(xml_bytes, max_bytes=MAX_FEED_BYTES)
     validate_xml_no_entities(xml_bytes)
 
+    scan_limit = max_scan if max_scan is not None else max(feed.max_items * 5, 50)
     pull = ET.XMLPullParser(events=("start", "end"))
     entries: list[dict[str, str]] = []
     root_name = ""
@@ -431,18 +756,23 @@ def parse_rss_or_atom(xml_bytes: bytes, feed: FeedEntry) -> list[dict[str, str]]
                         entries.append(extracted)
                     elem.clear()
 
-                if len(entries) >= feed.max_items:
-                    return entries[: feed.max_items]
+                if len(entries) >= scan_limit:
+                    return entries[:scan_limit]
         pull.close()
     except ET.ParseError:
         if entries:
-            return entries[: feed.max_items]
+            return entries[:scan_limit]
         raise
 
-    return entries[: feed.max_items]
+    return entries[:scan_limit]
 
 
-def parse_hn_algolia(json_bytes: bytes, feed: FeedEntry) -> list[dict[str, str]]:
+def parse_hn_algolia(
+    json_bytes: bytes,
+    feed: FeedEntry,
+    *,
+    max_scan: int | None = None,
+) -> list[dict[str, str]]:
     """Parse HN Algolia search_by_date JSON payload into raw item dicts."""
     payload = json.loads(json_bytes.decode("utf-8", errors="replace"))
     if not isinstance(payload, dict):
@@ -450,6 +780,7 @@ def parse_hn_algolia(json_bytes: bytes, feed: FeedEntry) -> list[dict[str, str]]
     hits = payload.get("hits", [])
     if not isinstance(hits, list):
         raise ValueError(f"Expected JSON list for 'hits' in HN Algolia feed, got {type(hits).__name__}")
+    scan_limit = max_scan if max_scan is not None else max(feed.max_items * 3, 30)
     entries: list[dict[str, str]] = []
     for hit in hits:
         if not isinstance(hit, dict):
@@ -472,7 +803,7 @@ def parse_hn_algolia(json_bytes: bytes, feed: FeedEntry) -> list[dict[str, str]]
             entries.append(
                 {"title": title, "url": url, "published_at": published, "raw_body": body}
             )
-        if len(entries) >= feed.max_items:
+        if len(entries) >= scan_limit:
             break
     return entries
 
@@ -536,6 +867,8 @@ def fetch_candidates(
             effective_keywords.extend(registry.default_agentic_keywords)
 
         for entry in raw_entries:
+            if summary.new_count >= feed.max_items:
+                break
             raw_url = entry.get("url", "").strip()
             if not raw_url.startswith("https://"):
                 summary.filtered_count += 1
@@ -544,6 +877,10 @@ def fetch_candidates(
             item_id = make_item_id(canonical)
             title = sanitize_single_line(entry.get("title", ""), max_chars=240)
             if not title:
+                summary.filtered_count += 1
+                continue
+
+            if feed.filter_prereleases and is_prerelease_version(title, raw_url):
                 summary.filtered_count += 1
                 continue
 
@@ -612,7 +949,7 @@ def fetch_candidates(
                 title=title,
                 url=raw_url,
                 canonical_url=canonical,
-                domain=extract_domain(canonical),
+                domain=extract_source_key(canonical),
                 published_at=pub_dt.isoformat() if pub_dt else None,
                 excerpt=excerpt,
                 body=body_text,
@@ -638,20 +975,30 @@ def fetch_candidates(
 
 
 class _PlanBHTMLParser(HTMLParser):
-    """Extract og:url, canonical link, external anchor links, and metadata titles from stub HTML."""
+    """Extract og:url, canonical link, alternate feed links, external anchors, and titles from HTML."""
+
+    _SKIP_TAGS = frozenset({"script", "style", "noscript", "template"})
 
     def __init__(self) -> None:
         super().__init__(convert_charrefs=True)
+        self._skip_depth = 0
         self._in_title = False
         self._title_parts: list[str] = []
         self.og_title: str = ""
         self.og_urls: list[str] = []
         self.canonical_urls: list[str] = []
+        self.feed_urls: list[str] = []
         self.anchor_urls: list[str] = []
         self.description_urls: list[str] = []
 
     def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
         t = tag.lower()
+        if t in self._SKIP_TAGS:
+            self._skip_depth += 1
+            return
+        if self._skip_depth > 0:
+            return
+
         attr_map = {k.lower(): (v or "").strip() for k, v in attrs if k}
         if t == "title":
             self._in_title = True
@@ -670,19 +1017,26 @@ class _PlanBHTMLParser(HTMLParser):
         elif t == "link":
             rel_tokens = {tok.lower() for tok in attr_map.get("rel", "").split()}
             href = attr_map.get("href", "")
+            link_type = attr_map.get("type", "").split(";", 1)[0].strip().lower()
             if "canonical" in rel_tokens and href:
                 self.canonical_urls.append(href)
+            if "alternate" in rel_tokens and href and link_type in _FEED_MIME_TYPES:
+                self.feed_urls.append(href)
         elif t == "a":
             href = attr_map.get("href", "")
             if href:
                 self.anchor_urls.append(href)
 
     def handle_endtag(self, tag: str) -> None:
-        if tag.lower() == "title":
+        t = tag.lower()
+        if t in self._SKIP_TAGS and self._skip_depth > 0:
+            self._skip_depth -= 1
+            return
+        if t == "title":
             self._in_title = False
 
     def handle_data(self, data: str) -> None:
-        if self._in_title:
+        if self._skip_depth == 0 and self._in_title:
             self._title_parts.append(data)
 
     @property
@@ -697,14 +1051,80 @@ def _validate_fast_lane_ssrf(url: str, *, use_live_dns: bool) -> str:
     return validate_public_https_url(url, resolver=lambda _host: ["93.184.216.34"])
 
 
-def check_content_sufficiency(body_text: str, raw_html: str = "") -> tuple[bool, str]:
-    """Enforce the fail-closed content-sufficiency gate (`>= 600` chars AND `>= 100` words, no walls)."""
-    lowered_html = raw_html.lower()
+def _parse_plan_b_html(raw_html: str) -> _PlanBHTMLParser:
+    parser = _PlanBHTMLParser()
+    try:
+        parser.feed(raw_html)
+        parser.close()
+    except Exception:  # noqa: BLE001
+        pass
+    return parser
+
+
+def _extract_html_title(raw_html: str) -> str:
+    """Extract `<title>` text safely while ignoring `<script>`, `<noscript>`, and `<template>`."""
+    if not raw_html:
+        return ""
+    parser = _parse_plan_b_html(raw_html)
+    return sanitize_single_line(html_to_plain_text(parser.title_text, max_chars=240), max_chars=240)
+
+
+def extract_discovered_feed_url(
+    raw_html: str,
+    page_url: str,
+    *,
+    parser: _PlanBHTMLParser | None = None,
+) -> str:
+    """Passively extract and SSRF-validate `<link rel="alternate">` feed URLs (0 HTTP/DNS calls)."""
+    active_parser = parser or _parse_plan_b_html(raw_html)
+    for href in active_parser.feed_urls:
+        resolved = urljoin(page_url, href.strip())
+        if not resolved.lower().startswith("https://"):
+            continue
+        try:
+            _validate_fast_lane_ssrf(resolved, use_live_dns=False)
+        except SSRFError:
+            continue
+        return canonicalize_url(resolved)
+    return ""
+
+
+def detect_content_wall(body_text: str, *, page_title: str = "") -> str | None:
+    """Detect paywall truncation banners or thin interstitial/JS/CAPTCHA walls without scanning scripts."""
     lowered_body = body_text.lower()
-    if any(pat in lowered_html or pat in lowered_body for pat in _BOT_WALL_PATTERNS):
-        return False, "Target URL is gated by a bot-wall or CAPTCHA"
-    if any(pat in lowered_html or pat in lowered_body for pat in _LOGIN_OR_PAYWALL_PATTERNS):
-        return False, "Target URL is gated by a login, paywall, or JS wall"
+    if any(pat in lowered_body for pat in _PAYWALL_TRUNCATION_PATTERNS):
+        return "Target URL is gated by a login or paywall truncation banner"
+
+    lowered_title = page_title.strip().lower()
+    if lowered_title:
+        if lowered_title in _WALL_TITLES or any(pat in lowered_title for pat in _BOT_WALL_PATTERNS):
+            return "Target URL is gated by a bot-wall, CAPTCHA, or interstitial title"
+        if any(pat in lowered_title for pat in _JS_OR_LOGIN_STUB_PATTERNS):
+            return "Target URL is gated by a login or JS wall"
+
+    char_count = len(body_text)
+    word_count = len(body_text.split())
+    is_thin = char_count < _INTERSTITIAL_THIN_CHARS or word_count < _INTERSTITIAL_THIN_WORDS
+    if is_thin:
+        if any(pat in lowered_body for pat in _BOT_WALL_PATTERNS):
+            return "Target URL is gated by a bot-wall or CAPTCHA"
+        if any(pat in lowered_body for pat in _JS_OR_LOGIN_STUB_PATTERNS):
+            return "Target URL is gated by a login or JS wall"
+
+    return None
+
+
+def check_content_sufficiency(
+    body_text: str,
+    raw_html: str = "",
+    *,
+    page_title: str = "",
+) -> tuple[bool, str]:
+    """Enforce the fail-closed content-sufficiency gate (`>= 600` chars AND `>= 100` words, no walls)."""
+    resolved_title = page_title or (_extract_html_title(raw_html) if raw_html else "")
+    wall_reason = detect_content_wall(body_text, page_title=resolved_title)
+    if wall_reason:
+        return False, wall_reason
 
     char_count = len(body_text)
     word_count = len(body_text.split())
@@ -717,20 +1137,15 @@ def check_content_sufficiency(body_text: str, raw_html: str = "") -> tuple[bool,
     return True, ""
 
 
-def _parse_html_metadata_and_plan_b_urls(
+def _parse_html_metadata(
     raw_html: str,
     current_url: str,
     visited: set[str],
     *,
     use_live_dns: bool,
-) -> tuple[str, list[str]]:
-    """Extract clean page title and ordered, SSRF-validated Plan B follow URLs."""
-    parser = _PlanBHTMLParser()
-    try:
-        parser.feed(raw_html)
-        parser.close()
-    except Exception:  # noqa: BLE001
-        pass
+) -> tuple[str, str, list[str], str]:
+    """Extract clean page title, raw `<title>`, SSRF-validated Plan B URLs, and passive feed URL."""
+    parser = _parse_plan_b_html(raw_html)
 
     raw_title = sanitize_single_line(
         html_to_plain_text(parser.title_text, max_chars=240), max_chars=240
@@ -769,7 +1184,76 @@ def _parse_html_metadata_and_plan_b_urls(
             continue
         candidates.append(canon)
 
-    return title, candidates
+    discovered_feed = extract_discovered_feed_url(raw_html, current_url, parser=parser)
+    return title, raw_title, candidates, discovered_feed
+
+
+def _github_blob_to_raw_url(url: str) -> tuple[str, str] | None:
+    """Convert `https://github.com/<owner>/<repo>/blob/<ref>/<path>` into a raw URL and fallback title."""
+    parsed = urlparse(url.strip())
+    if extract_domain(url) != "github.com":
+        return None
+    parts = [p for p in (parsed.path or "").split("/") if p]
+    if len(parts) < 5 or parts[2] != "blob":
+        return None
+    owner, repo = parts[0], parts[1]
+    if owner.lower() in _GITHUB_RESERVED_PREFIXES:
+        return None
+    ref_and_path = "/".join(parts[3:])
+    file_path = "/".join(parts[4:])
+    if Path(file_path.lower()).suffix in _BINARY_EXTENSIONS:
+        return None
+    raw_url = f"https://raw.githubusercontent.com/{owner}/{repo}/{ref_and_path}"
+    fallback_title = f"{owner}/{repo}/{file_path}"
+    return raw_url, fallback_title
+
+
+def _extract_markdown_h1(text: str) -> str:
+    """Return the first Markdown `# H1` heading outside fenced code blocks, if present."""
+    in_fence = False
+    for raw_line in text.splitlines():
+        stripped = raw_line.strip()
+        if stripped.startswith("```") or stripped.startswith("~~~"):
+            in_fence = not in_fence
+            continue
+        if in_fence:
+            continue
+        m = re.match(r"^#\s+(.+?)\s*#*$", stripped)
+        if m:
+            heading = sanitize_single_line(m.group(1), max_chars=240)
+            if heading:
+                return heading
+    return ""
+
+
+def _try_fetch_github_blob_raw(
+    canonical_url: str,
+    *,
+    getter: Callable[[str], tuple[str, bytes]],
+    use_live_dns: bool,
+) -> tuple[str, str] | None:
+    """Fetch clean raw text for a GitHub `blob/` URL (SSRF-checked, rejecting NUL-byte binaries)."""
+    blob_info = _github_blob_to_raw_url(canonical_url)
+    if blob_info is None:
+        return None
+    raw_url, fallback_title = blob_info
+    _validate_fast_lane_ssrf(raw_url, use_live_dns=use_live_dns)
+    try:
+        final_raw_u, raw_bytes = getter(raw_url)
+        _validate_fast_lane_ssrf(final_raw_u, use_live_dns=use_live_dns)
+    except SSRFError:
+        raise
+    except Exception:  # noqa: BLE001
+        return None
+
+    if b"\x00" in raw_bytes:
+        return None
+    decoded = raw_bytes.decode("utf-8", errors="replace")
+    cleaned = re.sub(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]", "", decoded).strip()
+    if len(cleaned) > MAX_STAGE2_BODY_CHARS:
+        cleaned = cleaned[: MAX_STAGE2_BODY_CHARS - 3].rstrip() + "..."
+    title = _extract_markdown_h1(cleaned) or fallback_title
+    return title, cleaned
 
 
 def _make_fast_lane_item(
@@ -778,21 +1262,24 @@ def _make_fast_lane_item(
     canonical_url: str,
     title: str,
     body_text: str,
+    discovered_feed_url: str = "",
 ) -> CandidateItem:
+    source_key = extract_source_key(canonical_url) or extract_domain(canonical_url)
     return CandidateItem(
         item_id=make_item_id(canonical_url),
         feed_id="fast-lane",
         feed_name="Manual Fast-Lane",
-        title=title or extract_domain(canonical_url),
+        title=title or source_key,
         url=original_url,
         canonical_url=canonical_url,
-        domain=extract_domain(canonical_url),
+        domain=source_key,
         published_at=datetime.now(UTC).isoformat(),
         excerpt=body_text[:MAX_STAGE1_EXCERPT_CHARS],
         body=body_text,
-        title_hash=normalize_title_hash(title or extract_domain(canonical_url)),
+        title_hash=normalize_title_hash(title or source_key),
         content_hash=make_content_hash(body_text),
         enrichment_status="enriched",
+        discovered_feed_url=discovered_feed_url,
     )
 
 
@@ -805,10 +1292,13 @@ def build_fast_lane_candidate(
     """Create a validated CandidateItem from an owner-supplied URL with SSRF-safe Plan B resolution.
 
     Plan B resolution sequence for thin/stub pages:
-    1. Follow SSRF-validated `og:url`, `<link rel="canonical">`, or external article links.
-    2. For `x.com` / `twitter.com` status URLs, query `publish.twitter.com/oembed` and follow
-       any embedded external blog links or extract full oEmbed text.
-    3. Enforce the fail-closed content-sufficiency gate (`>= 600` chars AND `>= 100` words,
+    1. For GitHub `blob/` URLs, attempt clean raw text via `raw.githubusercontent.com` first
+       (preserving the `github.com` canonical URL and falling back to HTML on error).
+    2. Follow SSRF-validated `og:url`, `<link rel="canonical">`, or external article links.
+    3. For `x.com` / `twitter.com` status URLs (including redirects), query
+       `publish.twitter.com/oembed` and follow any embedded external blog links or extract full
+       oEmbed text.
+    4. Enforce the fail-closed content-sufficiency gate (`>= 600` chars AND `>= 100` words,
        no login/paywall/CAPTCHA/JS wall) before any LLM call, raising `FetchIncompleteError`.
     """
     use_live_dns = http_get is None
@@ -826,6 +1316,7 @@ def build_fast_lane_candidate(
         return canonicalize_url(final_u), raw_b.decode("utf-8", errors="replace")
 
     visited: set[str] = {initial_canonical}
+    resolved_initial_canonical = initial_canonical
     best_canonical = initial_canonical
     best_title = extract_domain(initial_canonical)
     best_body = ""
@@ -833,23 +1324,43 @@ def build_fast_lane_candidate(
     initial_item: CandidateItem | None = None
     plan_b_urls: list[str] = []
 
+    # Fast path for GitHub blob URLs (keeps canonical_url on github.com)
+    raw_blob = _try_fetch_github_blob_raw(
+        initial_canonical, getter=getter, use_live_dns=use_live_dns
+    )
+    if raw_blob is not None:
+        blob_title, blob_body = raw_blob
+        blob_ok, blob_reason = check_content_sufficiency(blob_body)
+        if blob_ok:
+            return _make_fast_lane_item(
+                original_url=url,
+                canonical_url=initial_canonical,
+                title=blob_title,
+                body_text=blob_body,
+            )
+        best_title = blob_title
+        best_body = blob_body
+        last_reason = blob_reason
+
     try:
         final_canonical, decoded = _safe_fetch(initial_canonical)
+        resolved_initial_canonical = final_canonical
         visited.add(final_canonical)
-        title, plan_b_urls = _parse_html_metadata_and_plan_b_urls(
+        title, raw_title, plan_b_urls, discovered_feed = _parse_html_metadata(
             decoded, final_canonical, visited, use_live_dns=use_live_dns
         )
         body_text = html_to_plain_text(decoded, max_chars=MAX_STAGE2_BODY_CHARS)
         best_canonical = final_canonical
         best_title = title
         best_body = body_text
-        is_ok, last_reason = check_content_sufficiency(body_text, decoded)
+        is_ok, last_reason = check_content_sufficiency(body_text, decoded, page_title=raw_title)
         if is_ok:
             initial_item = _make_fast_lane_item(
                 original_url=url,
                 canonical_url=final_canonical,
                 title=title,
                 body_text=body_text,
+                discovered_feed_url=discovered_feed,
             )
             # Return immediately unless this is an X/Twitter status page with an embedded external article link
             if not (extract_domain(final_canonical) in _X_STATUS_DOMAINS and plan_b_urls):
@@ -866,22 +1377,43 @@ def build_fast_lane_candidate(
             break
         extra_fetches += 1
         visited.add(cand_url)
+        cand_blob = _try_fetch_github_blob_raw(
+            cand_url, getter=getter, use_live_dns=use_live_dns
+        )
+        if cand_blob is not None:
+            blob_title, blob_body = cand_blob
+            blob_ok, blob_reason = check_content_sufficiency(blob_body)
+            if blob_ok:
+                return _make_fast_lane_item(
+                    original_url=url,
+                    canonical_url=cand_url,
+                    title=blob_title,
+                    body_text=blob_body,
+                )
+            if len(blob_body) > len(best_body):
+                best_canonical = cand_url
+                best_title = blob_title
+                best_body = blob_body
+            last_reason = blob_reason
         try:
             cand_final, cand_html = _safe_fetch(cand_url)
         except Exception:  # noqa: BLE001
             continue
         visited.add(cand_final)
-        cand_title, _ = _parse_html_metadata_and_plan_b_urls(
+        cand_title, cand_raw_title, _, cand_feed = _parse_html_metadata(
             cand_html, cand_final, visited, use_live_dns=use_live_dns
         )
         cand_body = html_to_plain_text(cand_html, max_chars=MAX_STAGE2_BODY_CHARS)
-        cand_ok, cand_reason = check_content_sufficiency(cand_body, cand_html)
+        cand_ok, cand_reason = check_content_sufficiency(
+            cand_body, cand_html, page_title=cand_raw_title
+        )
         if cand_ok:
             return _make_fast_lane_item(
                 original_url=url,
                 canonical_url=cand_final,
                 title=cand_title,
                 body_text=cand_body,
+                discovered_feed_url=cand_feed,
             )
         if len(cand_body) > len(best_body):
             best_canonical = cand_final
@@ -890,16 +1422,18 @@ def build_fast_lane_candidate(
         last_reason = cand_reason
 
     # Plan B Step 2: publish.twitter.com/oembed fallback for x.com / twitter.com status URLs
-    is_x_url = (
-        extract_domain(initial_canonical) in _X_STATUS_DOMAINS
-        or extract_domain(best_canonical) in _X_STATUS_DOMAINS
-    )
-    if is_x_url and extra_fetches < MAX_PLAN_B_FETCHES:
+    x_status_url = ""
+    for candidate_x in (best_canonical, resolved_initial_canonical, initial_canonical):
+        if extract_domain(candidate_x) in _X_STATUS_DOMAINS:
+            x_status_url = candidate_x
+            break
+
+    if x_status_url and extra_fetches < MAX_PLAN_B_FETCHES:
         extra_fetches += 1
         oembed_candidates = [
-            f"https://publish.twitter.com/oembed?{urlencode({'url': initial_canonical, 'omit_script': 'true'})}",
-            f"https://publish.twitter.com/oembed?{urlencode({'url': initial_canonical})}",
-            f"https://publish.twitter.com/oembed?url={initial_canonical}",
+            f"https://publish.twitter.com/oembed?{urlencode({'url': x_status_url, 'omit_script': 'true'})}",
+            f"https://publish.twitter.com/oembed?{urlencode({'url': x_status_url})}",
+            f"https://publish.twitter.com/oembed?url={x_status_url}",
         ]
         oembed_raw: str | None = None
         for oembed_url in oembed_candidates:
@@ -921,30 +1455,44 @@ def build_fast_lane_candidate(
                 author_name = sanitize_single_line(
                     str(oembed_payload.get("author_name") or ""), max_chars=80
                 )
-                _, oembed_links = _parse_html_metadata_and_plan_b_urls(
-                    oembed_html, initial_canonical, visited, use_live_dns=use_live_dns
+                _, _, oembed_links, _ = _parse_html_metadata(
+                    oembed_html, x_status_url, visited, use_live_dns=use_live_dns
                 )
                 for olink in oembed_links:
                     if extra_fetches >= MAX_PLAN_B_FETCHES:
                         break
                     extra_fetches += 1
                     visited.add(olink)
+                    olink_blob = _try_fetch_github_blob_raw(
+                        olink, getter=getter, use_live_dns=use_live_dns
+                    )
+                    if olink_blob is not None:
+                        blob_title, blob_body = olink_blob
+                        blob_ok, _ = check_content_sufficiency(blob_body)
+                        if blob_ok:
+                            return _make_fast_lane_item(
+                                original_url=url,
+                                canonical_url=olink,
+                                title=blob_title,
+                                body_text=blob_body,
+                            )
                     try:
                         ofinal, ohtml = _safe_fetch(olink)
                     except Exception:  # noqa: BLE001
                         continue
                     visited.add(ofinal)
-                    otitle, _ = _parse_html_metadata_and_plan_b_urls(
+                    otitle, oraw_title, _, ofeed = _parse_html_metadata(
                         ohtml, ofinal, visited, use_live_dns=use_live_dns
                     )
                     obody = html_to_plain_text(ohtml, max_chars=MAX_STAGE2_BODY_CHARS)
-                    ook, oreason = check_content_sufficiency(obody, ohtml)
+                    ook, oreason = check_content_sufficiency(obody, ohtml, page_title=oraw_title)
                     if ook:
                         return _make_fast_lane_item(
                             original_url=url,
                             canonical_url=ofinal,
                             title=otitle,
                             body_text=obody,
+                            discovered_feed_url=ofeed,
                         )
                     if len(obody) > len(best_body):
                         best_canonical = ofinal
@@ -964,7 +1512,7 @@ def build_fast_lane_candidate(
                     )
                     return _make_fast_lane_item(
                         original_url=url,
-                        canonical_url=initial_canonical,
+                        canonical_url=x_status_url,
                         title=oembed_title,
                         body_text=oembed_body,
                     )
@@ -998,28 +1546,51 @@ def enrich_survivor_body(
 ) -> CandidateItem:
     """Deterministically fetch readable target-page text ONLY for short-body Stage 1 survivors.
 
-    Fails closed (`enrichment_status='fetch_blocked'`) on SSRF error, HTTP block, or CAPTCHA.
+    Fails closed (`enrichment_status='fetch_blocked'`) on SSRF error, HTTP block, paywall,
+    JS wall, or CAPTCHA, and passively captures `<link rel="alternate">` RSS/Atom feed URLs.
     """
     if len(item.body) >= SHORT_BODY_ENRICH_THRESHOLD:
         return item.model_copy(update={"enrichment_status": "feed_sufficient"})
 
+    use_live_dns = http_get is None
     getter = http_get or (
         lambda u: safe_http_get(u, user_agent=config.user_agent, max_bytes=MAX_HTTP_BYTES)
     )
     try:
-        _, raw_bytes = getter(item.canonical_url)
+        raw_blob = _try_fetch_github_blob_raw(
+            item.canonical_url, getter=getter, use_live_dns=use_live_dns
+        )
+        if raw_blob is not None:
+            _, blob_body = raw_blob
+            if len(blob_body) >= 120 and detect_content_wall(blob_body) is None:
+                return item.model_copy(
+                    update={
+                        "body": blob_body,
+                        "content_hash": make_content_hash(blob_body),
+                        "enrichment_status": "enriched",
+                    }
+                )
+
+        final_url, raw_bytes = getter(item.canonical_url)
         decoded = raw_bytes.decode("utf-8", errors="replace")
-        lowered = decoded.lower()
-        if any(pat in lowered for pat in _BOT_WALL_PATTERNS):
-            return item.model_copy(update={"enrichment_status": "fetch_blocked"})
+        parser = _parse_plan_b_html(decoded)
+        page_title = sanitize_single_line(
+            html_to_plain_text(parser.title_text, max_chars=240), max_chars=240
+        )
         extracted = html_to_plain_text(decoded, max_chars=MAX_STAGE2_BODY_CHARS)
+        if detect_content_wall(extracted, page_title=page_title) is not None:
+            return item.model_copy(update={"enrichment_status": "fetch_blocked"})
         if len(extracted) < 120:
             return item.model_copy(update={"enrichment_status": "fetch_blocked"})
+        discovered_feed = extract_discovered_feed_url(
+            decoded, final_url or item.canonical_url, parser=parser
+        )
         return item.model_copy(
             update={
                 "body": extracted,
                 "content_hash": make_content_hash(extracted),
                 "enrichment_status": "enriched",
+                "discovered_feed_url": discovered_feed or item.discovered_feed_url,
             }
         )
     except Exception:  # noqa: BLE001

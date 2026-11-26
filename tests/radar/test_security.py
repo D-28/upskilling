@@ -87,11 +87,13 @@ def test_html_to_plain_text_strips_scripts_styles_and_tags() -> None:
     raw = (
         "<html><head><style>body{display:none}</style>"
         "<script>fetch('https://evil.example')</script></head>"
-        "<body><h1>Title</h1><p>Hello <b>world</b> &amp; friends.</p></body></html>"
+        "<body><template><div>Hidden GitHub UI chrome</div></template>"
+        "<h1>Title</h1><p>Hello <b>world</b> &amp; friends.</p></body></html>"
     )
     out = html_to_plain_text(raw)
     assert "fetch(" not in out
     assert "display:none" not in out
+    assert "Hidden GitHub UI chrome" not in out
     assert "Title" in out
     assert "Hello world & friends." in out
 
