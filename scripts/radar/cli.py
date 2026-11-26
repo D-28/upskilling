@@ -6,7 +6,7 @@ import argparse
 import json
 import sys
 from collections.abc import Callable
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 from scripts.radar.config import PipelineConfig
@@ -14,11 +14,19 @@ from scripts.radar.fetcher import (
     FetchIncompleteError,
     build_fast_lane_candidate,
     canonicalize_url,
+    classify_source,
+    classify_source_key,
     enrich_survivor_body,
     extract_domain,
+    extract_source_key,
     fetch_candidates,
+    is_source_subscribed,
     load_feed_registry,
     make_item_id,
+    normalize_source_key,
+    parse_timestamp,
+    resolve_feed_hint,
+    subscribed_source_keys,
 )
 from scripts.radar.inventory import (
     build_repo_inventory,
@@ -38,6 +46,8 @@ from scripts.radar.models import (
     CandidateSummary,
     DeAnchoredCandidate,
     FeedFetchSummary,
+    FeedHealthState,
+    FeedRegistry,
     PendingCandidatesState,
     RunResult,
     ScoredSurvivor,
@@ -56,6 +66,7 @@ from scripts.radar.rubric import (
 from scripts.radar.security import (
     filter_allowed_repo_paths,
     redact_secrets,
+    sanitize_markdown_text,
     sanitize_single_line,
 )
 from scripts.radar.state import (
@@ -66,6 +77,7 @@ from scripts.radar.state import (
     load_feed_health,
     load_pending_candidates,
     load_seen_state,
+    recent_distinct_source_item_ids,
     save_feed_health,
     save_pending_candidates,
     save_seen_state,
@@ -131,13 +143,109 @@ def _to_candidate_summary(item: CandidateItem) -> CandidateSummary:
         body_chars=len(item.body),
         word_count=len(item.body.split()),
         enrichment_status=item.enrichment_status,
+        discovered_feed_url=item.discovered_feed_url,
     )
 
 
-def build_job_summary_markdown(result: RunResult) -> str:
+def _build_source_consideration_lines(
+    result: RunResult,
+    candidates_by_id: dict[str, CandidateSummary],
+    *,
+    health: FeedHealthState | None,
+    registry: FeedRegistry | None,
+) -> list[str]:
+    """Build ephemeral Source Consideration bullets for unsubscribed serial publishers on APPROVE_SYNTHESIS."""
+    v3 = result.stage3_verdict
+    if v3 is None or v3.decision != "APPROVE_SYNTHESIS" or not v3.syntheses:
+        return []
+
+    subscribed = subscribed_source_keys(registry) if registry is not None else set()
+    run_dt = parse_timestamp(result.run_at) or datetime.now(UTC)
+    cutoff = run_dt - timedelta(days=90)
+
+    run_ids_by_source: dict[str, set[str]] = {}
+    is_fast_lane_by_source: dict[str, bool] = {}
+    discovered_feed_by_source: dict[str, str] = {}
+
+    for iid in approved_stage3_item_ids(v3):
+        cs = candidates_by_id.get(iid)
+        if cs is None:
+            continue
+        source_key = (
+            extract_source_key(cs.canonical_url)
+            if cs.canonical_url
+            else normalize_source_key(cs.domain)
+        )
+        if not source_key or is_source_subscribed(source_key, subscribed):
+            continue
+        src_class = (
+            classify_source(cs.canonical_url)
+            if cs.canonical_url
+            else classify_source_key(source_key)
+        )
+        if src_class != "serial_publisher":
+            continue
+        run_ids_by_source.setdefault(source_key, set()).add(iid)
+        is_fast_lane_by_source[source_key] = is_fast_lane_by_source.get(source_key, False) or (
+            bool(result.fast_lane_url) or cs.feed_id == "fast-lane"
+        )
+        if cs.discovered_feed_url:
+            discovered_feed_by_source[source_key] = cs.discovered_feed_url
+
+    bullets: list[str] = []
+    for source_key in sorted(run_ids_by_source):
+        prior_rec = (
+            health.unsubscribed_domain_hits.get(source_key) if health is not None else None
+        )
+        prior_ids: set[str] = set()
+        prior_feed = ""
+        if prior_rec is not None:
+            recent_merged, recent_approved = recent_distinct_source_item_ids(prior_rec, cutoff)
+            prior_ids = recent_merged | recent_approved
+            prior_feed = prior_rec.discovered_feed_url
+
+        distinct_ids = prior_ids | run_ids_by_source[source_key]
+        total_hits = len(distinct_ids)
+        is_fl = is_fast_lane_by_source.get(source_key, False)
+        if not (is_fl or total_hits >= 2):
+            continue
+
+        raw_feed = discovered_feed_by_source.get(source_key) or prior_feed
+        feed_url = resolve_feed_hint(source_key, raw_feed)
+        if feed_url:
+            feed_clause = f"feed: `{sanitize_single_line(feed_url, 200)}`"
+        else:
+            feed_clause = "feed: none advertised in HTML"
+        hit_label = "1 hit" if total_hits == 1 else f"{total_hits} distinct 90d hits"
+        bullets.append(
+            f"- **`{source_key}`** (`serial_publisher`, {hit_label} · {feed_clause}) — "
+            f"consider adding manually to `radar/feeds.yaml`."
+        )
+
+    if not bullets:
+        return []
+    return ["", "### Source Consideration", "", *bullets]
+
+
+def build_job_summary_markdown(
+    result: RunResult,
+    *,
+    health: FeedHealthState | None = None,
+    registry: FeedRegistry | None = None,
+) -> str:
     """Format a self-contained, sanitized Markdown summary for GitHub Actions & PR bodies."""
     fast_lane_display = (
         sanitize_single_line(result.fast_lane_url, 200) if result.fast_lane_url else "none"
+    )
+    high_signal_clause = (
+        "(High Signal ≥ 9/10: n/a — direct Stage 3)"
+        if result.fast_lane_url and not result.stage2_results
+        else f"(High Signal ≥ 9/10: `{'yes' if result.has_high_signal else 'no'}`)"
+    )
+    staged_display_count = (
+        len(approved_stage3_item_ids(result.stage3_verdict))
+        if result.stage3_verdict
+        else len(result.staged_items)
     )
     lines = [
         f"## Radar Ingestion Summary — `{result.iso_week}` (`{result.mode}`)",
@@ -162,7 +270,7 @@ def build_job_summary_markdown(result: RunResult) -> str:
             if result.drained_item_ids
             else ""
         ),
-        f"- **Staged (Stage 3 approved):** `{len(approved_stage3_item_ids(result.stage3_verdict)) if result.stage3_verdict else len(result.staged_items)}` (High Signal ≥ 9/10: `{'yes' if result.has_high_signal else 'no'}`)",
+        f"- **Staged (Stage 3 approved):** `{staged_display_count}` {high_signal_clause}",
         *(
             [
                 f"- **Stage 3 Coherence Gate:** `{result.stage3_verdict.decision}` "
@@ -297,8 +405,32 @@ def build_job_summary_markdown(result: RunResult) -> str:
             for prop in v3.syntheses:
                 p_title = sanitize_single_line(prop.title, 180)
                 src_ids = ", ".join(prop.source_item_ids)
-                targets = ", ".join(filter_allowed_repo_paths(prop.target_repo_files)) or "radar/"
-                lines.append(f"- **[APPROVE_SYNTHESIS]** {p_title} (`{src_ids}`) -> `{targets}`")
+                allowed_targets = filter_allowed_repo_paths(prop.target_repo_files)
+                targets = ", ".join(f"`{t}`" for t in allowed_targets) or "`radar/`"
+                thesis = sanitize_markdown_text(prop.unified_thesis, max_chars=1000)
+                changes = sanitize_markdown_text(prop.proposed_repo_changes, max_chars=1200)
+                pruning = sanitize_markdown_text(prop.harmonization_and_pruning, max_chars=600)
+                career = sanitize_markdown_text(prop.career_takeaway, max_chars=400)
+                lines.extend(
+                    [
+                        f"#### [APPROVE_SYNTHESIS] {p_title}",
+                        f"- **Source Item IDs:** `{src_ids}`",
+                        f"- **Target Repo Files:** {targets}",
+                        f"- **Unified Thesis:** {thesis}",
+                        f"- **Proposed Repo Changes:** {changes}",
+                    ]
+                )
+                if pruning:
+                    lines.append(f"- **Harmonization and Pruning:** {pruning}")
+                if career:
+                    lines.append(f"- **Staff SWE / FDE Takeaway:** {career}")
+                lines.append("")
+
+            lines.extend(
+                _build_source_consideration_lines(
+                    result, candidates_by_id, health=health, registry=registry
+                )
+            )
         else:
             lines.extend(
                 [
@@ -368,6 +500,8 @@ def run_pipeline(
     *,
     seen: SeenState,
     pending: PendingCandidatesState | None = None,
+    health: FeedHealthState | None = None,
+    registry: FeedRegistry | None = None,
     mode: str = "observe",
     fast_lane_url: str | None = None,
     force: bool = False,
@@ -390,6 +524,10 @@ def run_pipeline(
         )
     else:
         effective_coherence_gate = bool(run_coherence_gate) and mode != "bootstrap"
+
+    effective_registry = registry
+    if effective_registry is None and config.feeds_path.is_file():
+        effective_registry = load_feed_registry(config.feeds_path)
 
     feed_summaries: list[FeedFetchSummary] = []
     if offline_candidates is not None:
@@ -419,7 +557,7 @@ def run_pipeline(
                         title=exc.title or extract_domain(failed_canon),
                         url=fast_lane_url,
                         canonical_url=failed_canon,
-                        domain=extract_domain(failed_canon),
+                        domain=extract_source_key(failed_canon) or extract_domain(failed_canon),
                         body_chars=exc.body_chars,
                         word_count=exc.word_count,
                         enrichment_status="fetch_incomplete",
@@ -427,7 +565,9 @@ def run_pipeline(
                 ],
                 candidates_fetched=0,
             )
-            incomplete_result.summary_markdown = build_job_summary_markdown(incomplete_result)
+            incomplete_result.summary_markdown = build_job_summary_markdown(
+                incomplete_result, health=health, registry=effective_registry
+            )
             return incomplete_result
 
         seen_urls = {rec.canonical_url for rec in effective_seen.items.values()}
@@ -441,9 +581,10 @@ def run_pipeline(
         else:
             candidates = [fast_candidate]
     else:
-        registry = load_feed_registry(config.feeds_path)
+        active_registry = effective_registry or load_feed_registry(config.feeds_path)
+        effective_registry = active_registry
         candidates, feed_summaries = fetch_candidates(
-            registry, effective_seen, config, now=run_dt, http_get=http_get
+            active_registry, effective_seen, config, now=run_dt, http_get=http_get
         )
 
     result = RunResult(
@@ -469,12 +610,16 @@ def run_pipeline(
                 first_seen_at=run_at,
                 verdict="BOOTSTRAP_SEEDED",
             )
-        result.summary_markdown = build_job_summary_markdown(result)
+        result.summary_markdown = build_job_summary_markdown(
+            result, health=health, registry=effective_registry
+        )
         return result
 
     has_pending_to_drain = bool(effective_coherence_gate and pending and pending.items)
     if not candidates and not has_pending_to_drain:
-        result.summary_markdown = build_job_summary_markdown(result)
+        result.summary_markdown = build_job_summary_markdown(
+            result, health=health, registry=effective_registry
+        )
         return result
 
     client: RadarLLMClient | None = None
@@ -558,6 +703,7 @@ def run_pipeline(
                     summaries_by_id[sv.item_id].body_chars = len(item.body)
                     summaries_by_id[sv.item_id].word_count = len(item.body.split())
                     summaries_by_id[sv.item_id].enrichment_status = item.enrichment_status
+                    summaries_by_id[sv.item_id].discovered_feed_url = item.discovered_feed_url
                 if item.enrichment_status == "fetch_blocked":
                     if item.item_id in result.new_seen_records:
                         result.new_seen_records[item.item_id].verdict = "FETCH_BLOCKED"
@@ -757,7 +903,9 @@ def run_pipeline(
                 f"{len(result.stage_errors)} LLM stage error(s) isolated; partial work preserved."
             )
 
-    result.summary_markdown = build_job_summary_markdown(result)
+    result.summary_markdown = build_job_summary_markdown(
+        result, health=health, registry=effective_registry
+    )
     return result
 
 
@@ -771,6 +919,8 @@ def apply_run_result_files(
     digest_dir: Path | None = None,
     summary_out_path: Path | None = None,
     update_state: bool = True,
+    repo_root: Path | None = None,
+    registry: FeedRegistry | None = None,
 ) -> dict[str, object]:
     """Job 2 deterministic helper: validate run-result.json, update state/buffer/audits, and render radar/ digest."""
     result = RunResult.model_validate_json(run_result_path.read_text(encoding="utf-8"))
@@ -779,22 +929,39 @@ def apply_run_result_files(
     pending = load_pending_candidates(effective_pending_path)
     audit_logged = False
 
+    effective_registry = registry
+    if effective_registry is None and repo_root is not None:
+        feeds_file = repo_root / "radar" / "feeds.yaml"
+        if feeds_file.is_file():
+            effective_registry = load_feed_registry(feeds_file)
+
+    effective_health: FeedHealthState | None = None
     if update_state:
         seen = load_seen_state(seen_path)
         health = load_feed_health(health_path)
-        updated_seen, updated_health = apply_run_result_to_state(seen, health, result)
+        updated_seen, updated_health = apply_run_result_to_state(
+            seen, health, result, registry=effective_registry
+        )
         updated_pending = apply_run_result_to_pending(pending, result)
         save_seen_state(seen_path, updated_seen)
         save_feed_health(health_path, updated_health)
         save_pending_candidates(effective_pending_path, updated_pending)
+        effective_health = updated_health
         if result.stage3_verdict is not None:
             audit_logged = append_weekly_audit(effective_audits_path, result)
     else:
         updated_pending = pending
+        if health_path.is_file():
+            effective_health = load_feed_health(health_path)
 
     if summary_out_path is not None:
         summary_out_path.parent.mkdir(parents=True, exist_ok=True)
-        summary_out_path.write_text(build_job_summary_markdown(result), encoding="utf-8")
+        summary_out_path.write_text(
+            build_job_summary_markdown(
+                result, health=effective_health, registry=effective_registry
+            ),
+            encoding="utf-8",
+        )
 
     stage3_decision = result.stage3_verdict.decision if result.stage3_verdict is not None else ""
     approved_ids = approved_stage3_item_ids(result.stage3_verdict)
@@ -862,6 +1029,8 @@ def _cmd_run(args: argparse.Namespace) -> int:
             if pending_arg
             else PendingCandidatesState()
         )
+        health_arg = getattr(args, "health_path", "")
+        health = load_feed_health(Path(health_arg)) if health_arg else None
         offline_candidates = None
         if args.offline_items:
             raw = json.loads(Path(args.offline_items).read_text(encoding="utf-8"))
@@ -877,6 +1046,7 @@ def _cmd_run(args: argparse.Namespace) -> int:
             config,
             seen=seen,
             pending=pending,
+            health=health,
             mode=args.mode,
             fast_lane_url=args.url or None,
             force=bool(getattr(args, "force", False)),
@@ -928,6 +1098,7 @@ def _cmd_apply_state(args: argparse.Namespace) -> int:
         digest_dir=Path(args.digest_dir) if args.digest_dir else None,
         summary_out_path=Path(args.summary_out) if args.summary_out else None,
         update_state=not args.no_update_state,
+        repo_root=Path(args.repo_root).resolve(),
     )
     github_output = getattr(args, "github_output", "")
     if github_output:
@@ -1006,6 +1177,11 @@ def build_parser() -> argparse.ArgumentParser:
         "--pending-path",
         default="",
         help="Path to pending-candidates.json from radar-state.",
+    )
+    p_run.add_argument(
+        "--health-path",
+        default="",
+        help="Optional read-only path to feed-health.json from radar-state.",
     )
     p_run.add_argument("--output", required=True, help="Path to write validated run-result.json.")
     p_run.add_argument("--summary-out", default="", help="Optional path to write Job Summary markdown.")

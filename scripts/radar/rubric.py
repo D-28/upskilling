@@ -12,7 +12,7 @@ from __future__ import annotations
 import re
 
 from scripts.radar.config import HIGH_SIGNAL_SCORE_THRESHOLD, STAGE_SCORE_THRESHOLD
-from scripts.radar.fetcher import canonicalize_url, extract_domain
+from scripts.radar.fetcher import canonicalize_url, extract_source_key
 from scripts.radar.models import (
     CandidateItem,
     CandidateSummary,
@@ -28,8 +28,15 @@ from scripts.radar.security import (
 )
 
 _MARKER_RE = re.compile(
-    r"<!--\s*radar-id:\s*([a-f0-9]{12})\s+source:\s*([A-Za-z0-9_.\-]+)\s+domain:\s*([A-Za-z0-9_.\-]+)\s*-->"
+    r"<!--\s*radar-id:\s*([a-f0-9]{12})\s+source:\s*([A-Za-z0-9_.\-]+)\s+domain:\s*([A-Za-z0-9_.\-/@]+(?<!/))\s*-->"
 )
+
+
+def _sanitize_marker_domain(domain: str, *, fallback: str = "unknown") -> str:
+    """Sanitize a domain or scoped source key for radar markers (allowing `/` and `@`, no trailing `/`)."""
+    cleaned = re.sub(r"[^A-Za-z0-9_.\-/@]", "_", domain.strip())
+    cleaned = re.sub(r"/{2,}", "/", cleaned).strip("/")
+    return cleaned or fallback
 
 
 def score_stage2_analysis(
@@ -84,7 +91,7 @@ def score_stage2_analysis(
 def format_radar_marker(item_id: str, feed_id: str, domain: str) -> str:
     """Build deterministic HTML metadata marker for idempotency and PR telemetry."""
     safe_feed = re.sub(r"[^A-Za-z0-9_.\-]", "_", feed_id) or "unknown"
-    safe_domain = re.sub(r"[^A-Za-z0-9_.\-]", "_", domain) or "unknown"
+    safe_domain = _sanitize_marker_domain(domain, fallback="unknown")
     return f"<!-- radar-id: {item_id} source: {safe_feed} domain: {safe_domain} -->"
 
 
@@ -101,7 +108,8 @@ def render_survivor_entry(scored: ScoredSurvivor) -> str:
 
     title = sanitize_single_line(item.title, max_chars=180)
     feed_name = sanitize_single_line(item.feed_name, max_chars=80)
-    safe_domain = re.sub(r"[^A-Za-z0-9_.\-]", "", item.domain) or "source"
+    raw_domain = item.domain or extract_source_key(item.canonical_url)
+    safe_domain = _sanitize_marker_domain(raw_domain, fallback="source")
     safe_url = canonicalize_url(item.canonical_url)
     badge = "HIGH SIGNAL" if scored.disposition == "HIGH_SIGNAL" else "STAGE"
     allowed_targets = filter_allowed_repo_paths(a.target_repo_files)
@@ -279,8 +287,8 @@ def render_stage3_synthesis_entry(
     for iid in proposal.source_item_ids:
         summary = items_by_id.get(iid)
         if summary is not None:
-            raw_domain = summary.domain or extract_domain(summary.canonical_url)
-            safe_domain = re.sub(r"[^A-Za-z0-9_.\-]", "", raw_domain) or "source"
+            raw_domain = summary.domain or extract_source_key(summary.canonical_url)
+            safe_domain = _sanitize_marker_domain(raw_domain, fallback="source")
             safe_url = canonicalize_url(summary.canonical_url)
             src_label = sanitize_single_line(summary.feed_name or summary.feed_id, max_chars=80)
             src_title = sanitize_single_line(summary.title, max_chars=140)

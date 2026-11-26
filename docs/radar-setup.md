@@ -59,12 +59,12 @@ Every run logs `response.model_version` in the Actions Job Summary. Check this l
 
 ## 4. Manual Fast-Lane Triage (Ad-Hoc X / Blog Links)
 
-When you spot a high-signal X thread or article manually, trigger `workflow_dispatch` with `fast_lane_url = https://...`. Plan B resolves canonical links or public oEmbed text and enforces `>= 600` chars and `>= 100` words. If a page hits a login wall, the run exits non-zero as `FETCH_INCOMPLETE` at `$0` LLM cost. Verified articles bypass Stage 1 directly into Stage 3 (`gemini-4-neon`, `HIGH`). Use `force = true` to re-evaluate a URL already present in `seen.json`. Access stays restricted to repository maintainers.
+When you spot a high-signal X thread, GitHub file, or article manually, trigger `workflow_dispatch` with `fast_lane_url = https://...`. Plan B resolves canonical links, raw GitHub `blob/` text, or public oEmbed text and enforces `>= 600` chars and `>= 100` words. If a page hits a login or paywall banner, the run exits non-zero as `FETCH_INCOMPLETE` at `$0` LLM cost. Verified articles bypass Stage 1 directly into Stage 3 (`gemini-4-neon`, `HIGH`). Use `force = true` to re-evaluate a URL already present in `seen.json`. Access stays restricted to repository maintainers.
 
 ---
 
 ## 5. Operational Notes & Quarterly Maintenance
 
-- **GitHub Actions 60-day inactivity limit:** GitHub automatically disables `schedule` triggers on public repositories with no commits for 60 days. Merging any PR or running `workflow_dispatch` resets the clock.
-- **Stage 3 audit log:** Every weekly Coherence Gate or fast-lane Stage 3 run appends a sanitized audit record to `weekly-audits.md` on `radar-state`.
-- **Quarterly feed health & pruning:** Job 2 reconciles merged and closed weekly Draft PRs and writes `feed-health-report.md` onto the `radar-state` branch. The report flags dead or noisy feeds to prune. It also lists unsubscribed domains with `>= 2` human-merged items in `90` days for manual promotion to [`radar/feeds.yaml`](../radar/feeds.yaml).
+- **GitHub Actions 60-day inactivity limit:** GitHub disables `schedule` triggers on public repositories with no commits for 60 days. Merging any PR or running `workflow_dispatch` resets the clock.
+- **Stage 3 audit log & Job Summaries:** Every Stage 3 run logs full approved synthesis prose in Job Summaries and `weekly-audits.md` on `radar-state`. Mid-week updates to an open weekly Draft PR also post a PR comment.
+- **Feed health, pruning & source promotion:** Job 2 reconciles weekly Draft PRs and writes `feed-health-report.md` onto `radar-state`. Active prune or promotion candidates also append to Job 2's Step Summary. Unsubscribed sources with `>= 2` merged or Stage 3-approved items in `90` days show up with passive RSS/Atom hints. Job Summaries also emit a `Source Consideration` callout for unsubscribed serial publishers (`1` fast-lane or `>= 2` aggregator hits). Automation never edits [`radar/feeds.yaml`](../radar/feeds.yaml).

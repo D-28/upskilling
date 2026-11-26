@@ -76,12 +76,26 @@ def test_property_rubric_scoring_gates_and_thresholds(
 @given(
     item_id=st.from_regex(r"[a-f0-9]{12}", fullmatch=True),
     feed_id=st.from_regex(r"[a-z0-9_\-]{3,20}", fullmatch=True),
-    domain=st.from_regex(r"[a-z]{3,10}\.[a-z]{2,5}", fullmatch=True),
+    domain=st.one_of(
+        st.from_regex(r"[a-z]{3,10}\.[a-z]{2,5}", fullmatch=True),
+        st.from_regex(r"github\.com/[a-z0-9\-]{2,12}/[a-z0-9_\-]{2,12}", fullmatch=True),
+        st.from_regex(r"x\.com/@[a-z0-9_]{2,12}", fullmatch=True),
+        st.from_regex(r"medium\.com/@[a-z0-9_\-]{2,12}", fullmatch=True),
+        st.from_regex(r"dev\.to/[a-z0-9_]{2,12}", fullmatch=True),
+    ),
 )
 def test_property_radar_marker_round_trip(item_id: str, feed_id: str, domain: str) -> None:
     marker = format_radar_marker(item_id, feed_id, domain)
     parsed = parse_radar_markers(marker)
     assert parsed == [(item_id, feed_id, domain)]
+
+
+def test_radar_marker_strips_trailing_slash_and_rejects_trailing_slash_in_parse() -> None:
+    marker = format_radar_marker("abcdef012345", "hn-agentic", "github.com/org/repo/")
+    assert "domain: github.com/org/repo -->" in marker
+    assert parse_radar_markers(marker) == [("abcdef012345", "hn-agentic", "github.com/org/repo")]
+    # Raw marker with trailing slash must not parse
+    assert parse_radar_markers("<!-- radar-id: abcdef012345 source: hn domain: github.com/org/ -->") == []
 
 
 def test_merge_into_weekly_digest_is_idempotent_and_appends_new_items() -> None:

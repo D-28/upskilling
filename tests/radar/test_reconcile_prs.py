@@ -115,3 +115,75 @@ def test_reconcile_prs_handles_transient_gh_errors_and_choose_branch_output_file
     payload = json.loads(out_file.read_text(encoding="utf-8"))
     assert payload == {"branch": "radar/weekly-2026-W47-2", "has_open_pr": True}
 
+
+def test_reconcile_prs_summary_out_is_silent_when_quiet_and_emits_active_alerts(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    from datetime import UTC, datetime
+    from pathlib import Path
+
+    from scripts.radar import reconcile_prs as rec_mod
+    from scripts.radar.models import DomainHitRecord, FeedHealthState, FeedStats
+    from scripts.radar.state import save_feed_health
+
+    repo_root = Path(__file__).resolve().parents[2]
+    health_path = tmp_path / "feed-health.json"
+    report_path = tmp_path / "feed-health-report.md"
+    summary_path = tmp_path / "step-summary.md"
+
+    monkeypatch.setattr(rec_mod, "_run_gh", lambda _args: "[]")
+
+    # 1. Quiet run (no prune or promotion candidates) writes 0 lines to summary_path
+    save_feed_health(health_path, FeedHealthState())
+    rc_quiet = rec_mod.main(
+        [
+            "reconcile",
+            "--repo-root",
+            str(repo_root),
+            "--health-path",
+            str(health_path),
+            "--report-out",
+            str(report_path),
+            "--summary-out",
+            str(summary_path),
+        ]
+    )
+    assert rc_quiet == 0
+    assert not summary_path.exists()
+
+    # 2. Active prune + promotion candidates append compact alerts to summary_path
+    now_iso = datetime.now(UTC).isoformat()
+    active_health = FeedHealthState(
+        feeds={"google-deepmind-blog": FeedStats(consecutive_fetch_errors=3)},
+        unsubscribed_domain_hits={
+            "blog.signal.dev": DomainHitRecord(
+                approved_item_ids=["111111111111", "222222222222"],
+                approved_dates=[now_iso, now_iso],
+                discovered_feed_url="https://blog.signal.dev/feed.xml",
+                source_class="serial_publisher",
+            )
+        },
+    )
+    save_feed_health(health_path, active_health)
+    rc_alert = rec_mod.main(
+        [
+            "reconcile",
+            "--repo-root",
+            str(repo_root),
+            "--health-path",
+            str(health_path),
+            "--report-out",
+            str(report_path),
+            "--summary-out",
+            str(summary_path),
+        ]
+    )
+    assert rc_alert == 0
+    assert summary_path.is_file()
+    summary_text = summary_path.read_text(encoding="utf-8")
+    assert "## Active Radar Feed Health Alerts" in summary_text
+    assert "google-deepmind-blog" in summary_text
+    assert "blog.signal.dev" in summary_text
+    assert "https://blog.signal.dev/feed.xml" in summary_text
+
