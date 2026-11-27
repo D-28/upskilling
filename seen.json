@@ -224,6 +224,14 @@
       "title_hash": "59edebcebb63",
       "verdict": "MARKETING_REBRAND"
     },
+    "67952d9a918d": {
+      "canonical_url": "https://openai.com/index/inside-the-codex-sandbox",
+      "content_hash": "6614a682b302",
+      "feed_id": "openai-news",
+      "first_seen_at": "2026-11-27T21:52:30.929789+00:00",
+      "title_hash": "1cf6500fb5e4",
+      "verdict": "ALREADY_COVERED"
+    },
     "69c0601d70f9": {
       "canonical_url": "https://github.blog/changelog/2026-11-25-copilot-code-review-billing-will-default-to-the-organization",
       "content_hash": "88b3a0fd88a2",
@@ -368,6 +376,14 @@
       "title_hash": "e0dbd9b98d5e",
       "verdict": "BOOTSTRAP_SEEDED"
     },
+    "8f6af8c44a4a": {
+      "canonical_url": "https://openai.com/index/introducing-gpt-6-2-astra-sol",
+      "content_hash": "2e09695da77c",
+      "feed_id": "openai-news",
+      "first_seen_at": "2026-11-27T21:52:30.929789+00:00",
+      "title_hash": "ceeaa7bad5db",
+      "verdict": "MODEL_RELEASE_FLUFF"
+    },
     "8f7a055a1b36": {
       "canonical_url": "https://github.com/anthropics/claude-code/releases/tag/v2.1.327",
       "content_hash": "2f532fa3b165",
@@ -504,6 +520,14 @@
       "title_hash": "402d40b26b54",
       "verdict": "MODEL_RELEASE_FLUFF"
     },
+    "b82b64ef90f7": {
+      "canonical_url": "https://openai.com/business/customer-stories/revolut",
+      "content_hash": "5dcadd9c6c6b",
+      "feed_id": "openai-news",
+      "first_seen_at": "2026-11-27T21:52:30.929789+00:00",
+      "title_hash": "6a9f772f8385",
+      "verdict": "MARKETING_REBRAND"
+    },
     "c19aa18de1b8": {
       "canonical_url": "https://github.com/openai/codex/releases/tag/rust-v0.174.0-alpha.7",
       "content_hash": "",
@@ -594,5 +618,5 @@
     }
   },
   "schema_version": 1,
-  "updated_at": "2026-11-26T22:12:14.856761+00:00"
+  "updated_at": "2026-11-27T21:52:30.929789+00:00"
 }

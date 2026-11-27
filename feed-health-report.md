@@ -1,6 +1,6 @@
 # Radar Feed Health & Pruning Report
 
-- **Generated:** `2026-11-26T22:12:32.293143+00:00`
+- **Generated:** `2026-11-27T21:52:51.314476+00:00`
 - **Evaluation Window:** Last `90` days
 
 ## Per-Feed Telemetry
@@ -10,7 +10,7 @@
 | `anthropic-engineering` | 2 | 0 | 0 | 0 | 0 | 0 |
 | `claude-code-releases` | 10 | 0 | 0 | 0 | 0 | 0 |
 | `github-copilot-changelog` | 6 | 0 | 0 | 0 | 0 | 0 |
-| `openai-news` | 9 | 0 | 0 | 0 | 0 | 0 |
+| `openai-news` | 12 | 0 | 0 | 0 | 0 | 0 |
 | `openai-codex-releases` | 22 | 0 | 0 | 0 | 0 | 0 |
 | `google-deepmind-blog` | 3 | 0 | 0 | 0 | 0 | 0 |
 | `karpathy-bearblog` | 0 | 0 | 0 | 0 | 0 | 0 |
@@ -22,5 +22,5 @@
 ## Prune Candidates (Review Manually)
 - None flagged.
 
-## Promotion Candidates (>= 2 Human-Merged Items from Unsubscribed Domains)
+## Promotion Candidates (>= 2 Distinct Items in 90d from Unsubscribed Sources)
 - None yet.
