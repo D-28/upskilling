@@ -54,12 +54,12 @@ jobs:
       - name: Checkout main (read-only)
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      - name: Fetch existing radar-state/seen.json and pending-candidates.json (read-only)
+      - name: Fetch existing radar-state/seen.json, pending-candidates.json, and feed-health.json (read-only)
         run: |
           mkdir -p /tmp/radar-state-read
           if git ls-remote --exit-code --heads origin radar-state >/dev/null 2>&1; then
             git fetch --depth=1 origin radar-state
-            for f in seen.json pending-candidates.json; do
+            for f in seen.json pending-candidates.json feed-health.json; do
               if git show "FETCH_HEAD:${f}" > "/tmp/radar-state-read/${f}.tmp" 2>/dev/null; then
                 mv "/tmp/radar-state-read/${f}.tmp" "/tmp/radar-state-read/${f}"
               else
@@ -101,6 +101,9 @@ jobs:
           fi
           if [ -s /tmp/radar-state-read/pending-candidates.json ]; then
             CMD+=(--pending-path /tmp/radar-state-read/pending-candidates.json)
+          fi
+          if [ -s /tmp/radar-state-read/feed-health.json ]; then
+            CMD+=(--health-path /tmp/radar-state-read/feed-health.json)
           fi
           if [ -n "$FAST_LANE_URL" ]; then
             CMD+=(--url "$FAST_LANE_URL")
@@ -189,6 +192,7 @@ jobs:
             --repo-root . \
             --health-path /tmp/radar-state-wt/feed-health.json \
             --report-out /tmp/radar-state-wt/feed-health-report.md \
+            --summary-out "$GITHUB_STEP_SUMMARY" \
             --allow-gh-failure
 
       - name: Persist updated state to orphan radar-state branch
@@ -223,7 +227,7 @@ jobs:
             exit 1
           fi
 
-          if [ "$HAS_OPEN_PR" = "true" ] && git ls-remote --exit-code --heads origin "$BRANCH" >/dev/null 2>&1; then
+          if git ls-remote --exit-code --heads origin "$BRANCH" >/dev/null 2>&1; then
             git fetch origin "$BRANCH"
             git checkout -B "$BRANCH" "origin/$BRANCH"
           else
@@ -267,6 +271,8 @@ jobs:
             if [ "$HAS_HIGH_SIGNAL" = "true" ]; then
               gh pr edit "$BRANCH" --add-label "high-signal"
             fi
+            gh pr comment "$BRANCH" --body-file /tmp/radar-pr-body.md || \
+              echo "::warning title=Radar PR comment failed::Digest commit pushed to ${BRANCH}, but posting the PR comment failed."
           else
             PR_ARGS=(--draft --base main --head "$BRANCH" --title "$PR_TITLE" --body-file /tmp/radar-pr-body.md)
             if [ "$HAS_HIGH_SIGNAL" = "true" ]; then

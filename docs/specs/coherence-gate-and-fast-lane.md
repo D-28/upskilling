@@ -57,12 +57,14 @@ Stage 3 evaluates every buffered candidate or synthesis against six failure mode
 
 ## 4. Invariants & Edge Cases
 
-- **Job Summary Observability:** Every run prints mode, `fast_lane_url`, `force`, extracted `title` + `body_chars`, and every Stage 1/2/3 verdict row.
-- **SSRF-Safe Plan B Hop Cap:** Every Plan B URL (`og:url`, `canonical`, external link, oEmbed) passes SSRF checks with at most `3` extra fetches.
-- **No `seen.json` Burn on Fast-Lane Tests:** Manual `observe` fast-lane runs and `FETCH_INCOMPLETE` failures never mark the URL as seen. Add `--force` / `force` input on `workflow_dispatch`.
+- **Job Summary & Audit Observability:** Every run logs mode, `fast_lane_url`, `force`, `title`, `body_chars`, and all Stage 1/2/3 verdicts. Approved Stage 3 syntheses also render full sanitized prose in Job Summaries and `weekly-audits.md`.
+- **SSRF-Safe Plan B & Accurate Wall Detection:** Every Plan B URL (`og:url`, `canonical`, external link, oEmbed, raw GitHub `blob/`) passes SSRF checks within `3` extra fetches. Wall detection ignores `<script>`/`<noscript>`/`<template>`, enforces paywall banners at any length, and gates interstitial stubs only on thin pages or wall titles.
+- **Stage 0 Hygiene:** Pre-release tags (`filter_prereleases: true`) drop before Stage 1 or `seen_content_hashes`. Atom/RSS scanning reads past filtered bursts (`max(max_items * 5, 50)`), and single-word keywords use exact `\b...\b` boundaries.
+- **No `seen.json` Burn or False Prune Flags on Non-Enforce Runs:** Manual `observe` fast-lane runs and `FETCH_INCOMPLETE` failures never burn `seen.json` or `stage2_staged`. `bootstrap` never inflates `items_fetched`, and `"0 human-merged items in window"` requires `>= 4` reconciled PRs or `>= 30` `enforce`-mode fetches.
+- **Two-Tier Source Promotion (`$0` LLM, `0` Extra HTTP):** Scoped source keys (`github.com/<owner>/<repo>`, `x.com/@<handle>`, `medium.com/@<author>`), `source_domains` aliases, and passive `<link rel="alternate">` feed hints drive promotion telemetry. `feed-health-report.md` lists unsubscribed sources with `>= 2` merged or Stage 3-approved items in `90`d. Job Summaries emit a `Source Consideration` callout for unsubscribed `serial_publisher`s (`1` fast-lane hit or `>= 2` aggregator hits). Automation never edits `radar/feeds.yaml`.
 - **De-Anchored Stage 3 Input:** Python strips Stage 2 numeric scores and badges before building the Stage 3 prompt.
-- **Cost & Zero-Tool Walls:** `tools=None` on Stage 3. Raise `MAX_RUN_COST_USD` to `0.50` and add `neon` pricing (`$3.00 / $0.15 / $15.00`) to `scripts/radar/config.py`.
-- **Artifact & State Compatibility:** New `pending-candidates.json` and `weekly-audits.md` live on orphan branch `radar-state` with backward-compatible empty defaults.
+- **Cost & Zero-Tool Walls:** `tools=None` on Stage 3. `MAX_RUN_COST_USD` is `0.50` with `neon` pricing (`$3.00 / $0.15 / $15.00`) in `scripts/radar/config.py`.
+- **Artifact & State Compatibility:** `pending-candidates.json`, `weekly-audits.md`, `feed-health.json`, and `seen.json` live on orphan branch `radar-state` with backward-compatible defaults (`extra="ignore"`).
 
 ---
 

@@ -6,6 +6,8 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
+SourceClass = Literal["serial_publisher", "one_off_artifact"]
+
 
 class FeedEntry(BaseModel):
     """Single source definition in radar/feeds.yaml."""
@@ -19,7 +21,9 @@ class FeedEntry(BaseModel):
     category: str = "general"
     max_items: int = Field(default=10, ge=1, le=50)
     filter_patch_releases: bool = False
+    filter_prereleases: bool = False
     changelog_fallback_url: str | None = None
+    source_domains: list[str] = Field(default_factory=list)
     keywords: list[str] = Field(default_factory=list)
     use_default_keywords: bool = False
     min_points: int = 0
@@ -65,6 +69,7 @@ class CandidateItem(BaseModel):
         "fetch_incomplete",
         "not_needed",
     ] = "not_needed"
+    discovered_feed_url: str = ""
 
 
 class CandidateSummary(BaseModel):
@@ -82,6 +87,7 @@ class CandidateSummary(BaseModel):
     body_chars: int = 0
     word_count: int = 0
     enrichment_status: str = "not_needed"
+    discovered_feed_url: str = ""
 
 
 Stage1VerdictCode = Literal[
@@ -340,6 +346,7 @@ class FeedStats(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
     items_fetched: int = 0
+    enforce_items_fetched: int = 0
     stage1_survivors: int = 0
     stage2_staged: int = 0
     human_merged: int = 0
@@ -351,12 +358,16 @@ class FeedStats(BaseModel):
 
 
 class DomainHitRecord(BaseModel):
-    """Tracks human-merged items from unsubscribed domains for >=2 promotion."""
+    """Tracks human-merged and Stage 3-approved items from unsubscribed sources."""
 
     model_config = ConfigDict(extra="ignore")
 
     merged_item_ids: list[str] = Field(default_factory=list)
     merged_dates: list[str] = Field(default_factory=list)
+    approved_item_ids: list[str] = Field(default_factory=list)
+    approved_dates: list[str] = Field(default_factory=list)
+    discovered_feed_url: str = ""
+    source_class: str = ""
 
 
 class FeedHealthState(BaseModel):

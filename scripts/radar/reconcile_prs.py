@@ -15,6 +15,7 @@ from scripts.radar.fetcher import load_feed_registry
 from scripts.radar.rubric import parse_radar_markers
 from scripts.radar.security import redact_secrets
 from scripts.radar.state import (
+    format_active_health_summary,
     generate_feed_health_report,
     load_feed_health,
     reconcile_pr_outcome,
@@ -103,6 +104,7 @@ def reconcile_closed_weekly_prs(
     repo_root: Path,
     health_path: Path,
     report_path: Path | None = None,
+    summary_path: Path | None = None,
     allow_gh_failure: bool = False,
 ) -> int:
     """Reconcile recently merged/closed `radar/weekly-*` PRs into feed-health.json."""
@@ -183,6 +185,12 @@ def reconcile_closed_weekly_prs(
         report = generate_feed_health_report(health, registry)
         report_path.parent.mkdir(parents=True, exist_ok=True)
         report_path.write_text(report, encoding="utf-8")
+    if summary_path is not None:
+        active_alerts = format_active_health_summary(health, registry)
+        if active_alerts:
+            summary_path.parent.mkdir(parents=True, exist_ok=True)
+            with summary_path.open("a", encoding="utf-8") as fh:
+                fh.write(active_alerts.rstrip() + "\n")
     return reconciled_count
 
 
@@ -236,6 +244,7 @@ def _cmd_reconcile(args: argparse.Namespace) -> int:
         repo_root=Path(args.repo_root).resolve(),
         health_path=Path(args.health_path),
         report_path=Path(args.report_out) if args.report_out else None,
+        summary_path=Path(args.summary_out) if args.summary_out else None,
         allow_gh_failure=bool(args.allow_gh_failure),
     )
     print(json.dumps({"reconciled_prs": count}))
@@ -255,6 +264,11 @@ def main(argv: list[str] | None = None) -> int:
     p_rec.add_argument("--repo-root", default=".")
     p_rec.add_argument("--health-path", required=True)
     p_rec.add_argument("--report-out", default="")
+    p_rec.add_argument(
+        "--summary-out",
+        default="",
+        help="Optional $GITHUB_STEP_SUMMARY path; appends alerts only when >= 1 candidate is flagged.",
+    )
     p_rec.add_argument(
         "--allow-gh-failure",
         action="store_true",

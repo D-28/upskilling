@@ -2146,3 +2146,564 @@ def test_zero_byte_corrupt_state_files_corrupt_run_result_and_sunday_no_gate(
         )
     assert "Fatal Error" in crash_summary.read_text(encoding="utf-8")
 
+
+def test_stage3_full_synthesis_prose_in_summary_and_weekly_audits_plus_direct_high_signal_label(
+    tmp_path: Path,
+) -> None:
+    config = PipelineConfig(repo_root=REPO_ROOT, feeds_path=REPO_ROOT / "radar" / "feeds.yaml")
+    article_body = " ".join(
+        ["Deterministic verification harnesses prevent silent context rot across multi-step agent runs."] * 22
+    )
+    article_html = (
+        "<html><head><title>Verification Loops at Scale</title>"
+        '<link rel="alternate" type="application/rss+xml" href="/rss.xml" />'
+        f"</head><body><article><p>{article_body}</p></article></body></html>"
+    ).encode()
+    fast_url = "https://eng.freshblog.dev/verification-loops"
+
+    class _ApproveStubLLM:
+        def triage_stage1_batch(self, items, repo_inventory):
+            raise AssertionError("fast-lane must bypass Stage 1")
+
+        def analyze_stage2_survivor(self, item, target_repo_context):
+            raise AssertionError("fast-lane must bypass Stage 2")
+
+        def evaluate_stage3_coherence(self, candidates, full_repo_baseline):
+            cid = candidates[0].item_id
+            verdict = Stage3CoherenceVerdict(
+                decision="APPROVE_SYNTHESIS",
+                executive_summary="Approved crisp verification loop invariant.",
+                item_audits=[
+                    Stage3ItemAudit(
+                        item_id=cid,
+                        verdict="APPROVE_SYNTHESIS",
+                        affected_repo_files=["playbooks/verification-engineering.md"],
+                        poisons=SystemicPoisonFlags(),
+                        rationale="Zero poisons and concrete reproducible evidence.",
+                    )
+                ],
+                syntheses=[
+                    Stage3SynthesisProposal(
+                        title="Bounded Verification Loop Checkpoints",
+                        source_item_ids=[cid],
+                        target_repo_files=["playbooks/verification-engineering.md"],
+                        unified_thesis="Persist deterministic exit-code checkpoints between retry loops.",
+                        proposed_repo_changes="Add a 4-line checkpoint contract to playbooks/verification-engineering.md.",
+                        harmonization_and_pruning="Tighten the older prose paragraph in section 2 to keep attention budget flat.",
+                        career_takeaway="Cuts enterprise FDE debug cycles on long-running coding agents.",
+                    )
+                ],
+            )
+            trace = LLMCallTrace(
+                stage="stage3",
+                requested_model="gemini-4-neon",
+                resolved_model_version="gemini-4-neon-2026-11",
+                thinking_level="HIGH",
+                api_version="v1beta",
+                estimated_cost_usd=0.04,
+                item_ids=[cid],
+            )
+            return verdict, trace
+
+    # Run in observe mode (where no PR is opened — prose MUST appear in summary.md and weekly-audits.md)
+    res = run_pipeline(
+        config,
+        seen=SeenState(),
+        mode="observe",
+        fast_lane_url=fast_url,
+        llm_client=_ApproveStubLLM(),
+        http_get=lambda u: (u, article_html),
+        now=datetime(2026, 11, 21, 14, 0, tzinfo=UTC),
+    )
+
+    # [P1-2] Direct fast-lane High Signal display
+    assert "(High Signal ≥ 9/10: n/a — direct Stage 3)" in res.summary_markdown
+
+    # [P0-1] Full synthesis prose in summary.md
+    for expected in (
+        "**Unified Thesis:** Persist deterministic exit-code checkpoints between retry loops.",
+        "**Proposed Repo Changes:** Add a 4-line checkpoint contract",
+        "**Harmonization and Pruning:** Tighten the older prose paragraph",
+        "**Staff SWE / FDE Takeaway:** Cuts enterprise FDE debug cycles",
+    ):
+        assert expected in res.summary_markdown
+
+    # Ephemeral Source Consideration callout for 1-hit fast-lane serial_publisher with discovered feed
+    assert "### Source Consideration" in res.summary_markdown
+    assert "`eng.freshblog.dev`" in res.summary_markdown
+    assert "https://eng.freshblog.dev/rss.xml" in res.summary_markdown
+
+    # Persist via Job 2 and verify weekly-audits.md ALSO renders full synthesis prose
+    rr_path = tmp_path / "run-result.json"
+    rr_path.write_text(res.model_dump_json(indent=2), encoding="utf-8")
+    seen_path = tmp_path / "state" / "seen.json"
+    health_path = tmp_path / "state" / "feed-health.json"
+    audits_path = tmp_path / "state" / "weekly-audits.md"
+    apply_run_result_files(
+        run_result_path=rr_path,
+        seen_path=seen_path,
+        health_path=health_path,
+        audits_path=audits_path,
+        repo_root=REPO_ROOT,
+    )
+    audit_md = load_weekly_audits(audits_path)
+    for expected in (
+        "#### Bounded Verification Loop Checkpoints",
+        "**Unified Thesis:** Persist deterministic exit-code checkpoints between retry loops.",
+        "**Proposed Repo Changes:** Add a 4-line checkpoint contract",
+        "**Harmonization and Pruning:** Tighten the older prose paragraph",
+        "**Staff SWE / FDE Takeaway:** Cuts enterprise FDE debug cycles",
+    ):
+        assert expected in audit_md
+
+    # Observe fast-lane approval must NOT increment stage2_staged ([P1-1])
+    health = load_feed_health(health_path)
+    assert health.feeds.get("fast-lane", FeedStats()).stage2_staged == 0
+    # Unsubscribed source hit WAS tracked with discovered feed URL
+    rec = health.unsubscribed_domain_hits["eng.freshblog.dev"]
+    assert len(rec.approved_item_ids) == 1
+    assert rec.discovered_feed_url == "https://eng.freshblog.dev/rss.xml"
+    assert rec.source_class == "serial_publisher"
+
+
+def test_two_tier_source_promotion_callouts_dedupe_aliases_and_buffered_feed_url(
+    tmp_path: Path,
+) -> None:
+    from scripts.radar.cli import build_job_summary_markdown
+    from scripts.radar.fetcher import make_item_id
+    from scripts.radar.models import (
+        CandidateSummary,
+        DomainHitRecord,
+        PendingCandidate,
+        PendingCandidatesState,
+        RunResult,
+    )
+    from scripts.radar.state import apply_run_result_to_state
+
+    registry = load_feed_registry(REPO_ROOT / "radar" / "feeds.yaml")
+    now = datetime(2026, 11, 22, 13, 0, tzinfo=UTC)
+    now_iso = now.isoformat()
+
+    def _make_approved_result(
+        *,
+        url: str,
+        feed_id: str,
+        domain: str,
+        discovered_feed_url: str = "",
+        fast_lane_url: str | None = None,
+        mode: str = "observe",
+        run_at: str = now_iso,
+    ) -> RunResult:
+        iid = make_item_id(url)
+        return RunResult(
+            run_at=run_at,
+            iso_week="2026-W47",
+            mode=mode,  # type: ignore[arg-type]
+            fast_lane_url=fast_lane_url,
+            candidate_summaries=[
+                CandidateSummary(
+                    item_id=iid,
+                    feed_id=feed_id,
+                    feed_name=feed_id,
+                    title=f"Title for {iid}",
+                    url=url,
+                    canonical_url=url,
+                    domain=domain,
+                    body_chars=2000,
+                    word_count=320,
+                    enrichment_status="enriched",
+                    discovered_feed_url=discovered_feed_url,
+                )
+            ],
+            stage3_verdict=Stage3CoherenceVerdict(
+                decision="APPROVE_SYNTHESIS",
+                executive_summary="Approved.",
+                item_audits=[
+                    Stage3ItemAudit(
+                        item_id=iid,
+                        verdict="APPROVE_SYNTHESIS",
+                        poisons=SystemicPoisonFlags(),
+                        rationale="Concrete engineering delta.",
+                    )
+                ],
+                syntheses=[
+                    Stage3SynthesisProposal(
+                        title="Concrete Delta",
+                        source_item_ids=[iid],
+                        target_repo_files=["playbooks/harness-loop-graph.md"],
+                        unified_thesis="Tightens loop boundary.",
+                        proposed_repo_changes="Add 2 bullets.",
+                    )
+                ],
+            ),
+        )
+
+    # 1. Fast-lane 1-hit serial_publisher WITHOUT advertised HTML feed -> shows "feed: none advertised in HTML"
+    fl_no_feed = _make_approved_result(
+        url="https://plainblog.example.dev/post-1",
+        feed_id="fast-lane",
+        domain="plainblog.example.dev",
+        fast_lane_url="https://plainblog.example.dev/post-1",
+    )
+    fl_summary = build_job_summary_markdown(fl_no_feed, health=FeedHealthState(), registry=registry)
+    assert "### Source Consideration" in fl_summary
+    assert "`plainblog.example.dev`" in fl_summary
+    assert "feed: none advertised in HTML" in fl_summary
+
+    # 2. Fast-lane 1-hit one_off_artifact (GitHub blob README) -> SUPPRESSES ephemeral callout,
+    #    but 2 distinct 90d approvals surface in feed-health-report.md with deferred releases.atom hint!
+    gh_1 = _make_approved_result(
+        url="https://github.com/acme/harness-tool/blob/main/README.md",
+        feed_id="fast-lane",
+        domain="github.com/acme/harness-tool",
+        fast_lane_url="https://github.com/acme/harness-tool/blob/main/README.md",
+    )
+    gh_1_summary = build_job_summary_markdown(gh_1, health=FeedHealthState(), registry=registry)
+    assert "### Source Consideration" not in gh_1_summary
+
+    _, health = apply_run_result_to_state(SeenState(), FeedHealthState(), gh_1, registry=registry)
+    # Re-applying the SAME item (--force / repeat observe) MUST NOT double-count!
+    _, health = apply_run_result_to_state(SeenState(), health, gh_1, registry=registry)
+    assert len(health.unsubscribed_domain_hits["github.com/acme/harness-tool"].approved_item_ids) == 1
+    assert "github.com/acme/harness-tool" not in generate_feed_health_report(health, registry, now=now)
+
+    # Second distinct item on same repo -> hits >= 2 in feed-health-report.md with releases.atom hint
+    gh_2 = _make_approved_result(
+        url="https://github.com/acme/harness-tool/blob/main/docs/DESIGN.md",
+        feed_id="fast-lane",
+        domain="github.com/acme/harness-tool",
+        fast_lane_url="https://github.com/acme/harness-tool/blob/main/docs/DESIGN.md",
+    )
+    _, health = apply_run_result_to_state(SeenState(), health, gh_2, registry=registry)
+    report_after_gh2 = generate_feed_health_report(health, registry, now=now)
+    assert "github.com/acme/harness-tool" in report_after_gh2
+    assert "https://github.com/acme/harness-tool/releases.atom" in report_after_gh2
+
+    # 3. Scheduled aggregator (hn-agentic) serial_publisher: suppressed at 1 hit, emitted at >= 2 hits
+    hn_1 = _make_approved_result(
+        url="https://deepeng.example.dev/post-1",
+        feed_id="hn-agentic",
+        domain="deepeng.example.dev",
+        discovered_feed_url="https://deepeng.example.dev/atom.xml",
+    )
+    hn_1_summary = build_job_summary_markdown(hn_1, health=health, registry=registry)
+    assert "### Source Consideration" not in hn_1_summary
+    _, health = apply_run_result_to_state(SeenState(), health, hn_1, registry=registry)
+
+    hn_2 = _make_approved_result(
+        url="https://deepeng.example.dev/post-2",
+        feed_id="hn-agentic",
+        domain="deepeng.example.dev",
+        discovered_feed_url="https://deepeng.example.dev/atom.xml",
+    )
+    # Job 1 knows prior 1 hit via read-only health -> emits callout on 2nd hit!
+    hn_2_summary = build_job_summary_markdown(hn_2, health=health, registry=registry)
+    assert "### Source Consideration" in hn_2_summary
+    assert "`deepeng.example.dev`" in hn_2_summary
+    assert "2 distinct 90d hits" in hn_2_summary
+    assert "https://deepeng.example.dev/atom.xml" in hn_2_summary
+
+    # 4. Already-subscribed aliases (anthropic.com, addyo.substack.com) are excluded everywhere
+    alias_res = _make_approved_result(
+        url="https://www.anthropic.com/engineering/new-harness-paper",
+        feed_id="fast-lane",
+        domain="anthropic.com",
+        fast_lane_url="https://www.anthropic.com/engineering/new-harness-paper",
+    )
+    assert "### Source Consideration" not in build_job_summary_markdown(
+        alias_res, health=health, registry=registry
+    )
+    _, health = apply_run_result_to_state(SeenState(), health, alias_res, registry=registry)
+    assert "anthropic.com" not in health.unsubscribed_domain_hits
+
+    # 5. Same item_id in BOTH merged_item_ids and approved_item_ids counts ONCE (union, not sum)
+    overlap_health = FeedHealthState(
+        unsubscribed_domain_hits={
+            "once.example.dev": DomainHitRecord(
+                merged_item_ids=["aaaaaaaaaaaa"],
+                merged_dates=[now_iso],
+                approved_item_ids=["aaaaaaaaaaaa"],
+                approved_dates=[now_iso],
+                source_class="serial_publisher",
+            )
+        }
+    )
+    assert "once.example.dev" not in generate_feed_health_report(overlap_health, registry, now=now)
+
+    # 6. Buffered Mon-Sat PendingCandidate preserves discovered_feed_url into Sunday Stage 3 & Job 2
+    buffered_item = CandidateItem(
+        item_id=make_item_id("https://sunday.example.dev/deep-dive"),
+        feed_id="hn-agentic",
+        feed_name="Hacker News",
+        title="Sunday Deep Dive",
+        url="https://sunday.example.dev/deep-dive",
+        canonical_url="https://sunday.example.dev/deep-dive",
+        domain="sunday.example.dev",
+        body="Detailed engineering article body.",
+        discovered_feed_url="https://sunday.example.dev/feed.xml",
+    )
+    pending = PendingCandidatesState(
+        updated_at=now_iso,
+        items={
+            buffered_item.item_id: PendingCandidate(
+                item=buffered_item,
+                analysis=Stage2Analysis(
+                    item_id=buffered_item.item_id,
+                    passes_net_new_delta_gate=True,
+                    passes_substance_gate=True,
+                    counterargument_to_drop="Minor overlap.",
+                    dimensions=RubricDimensions(
+                        delta_novelty=2,
+                        durability=2,
+                        actionability=1,
+                        evidence_quality=1,
+                        career_leverage=1,
+                    ),
+                    target_repo_files=["playbooks/harness-loop-graph.md"],
+                    what_is_net_new="Buffered delta.",
+                    proposed_refinement="Add note.",
+                    career_takeaway="Useful.",
+                ),
+                score=7,
+                disposition="STAGE",
+                buffered_at=now_iso,
+                iso_week="2026-W47",
+            )
+        },
+    )
+
+    class _SundayApproveLLM:
+        def evaluate_stage3_coherence(self, candidates, full_repo_baseline):
+            cid = candidates[0].item_id
+            return (
+                Stage3CoherenceVerdict(
+                    decision="APPROVE_SYNTHESIS",
+                    executive_summary="Approved buffered item.",
+                    item_audits=[
+                        Stage3ItemAudit(
+                            item_id=cid,
+                            verdict="APPROVE_SYNTHESIS",
+                            poisons=SystemicPoisonFlags(),
+                            rationale="Good delta.",
+                        )
+                    ],
+                    syntheses=[
+                        Stage3SynthesisProposal(
+                            title="Sunday Synthesis",
+                            source_item_ids=[cid],
+                            target_repo_files=["playbooks/harness-loop-graph.md"],
+                            unified_thesis="Unified.",
+                            proposed_repo_changes="Update section.",
+                        )
+                    ],
+                ),
+                LLMCallTrace(
+                    stage="stage3",
+                    requested_model="gemini-4-neon",
+                    resolved_model_version="gemini-4-neon-2026-11",
+                    thinking_level="HIGH",
+                    api_version="v1beta",
+                    estimated_cost_usd=0.03,
+                    item_ids=[cid],
+                ),
+            )
+
+    sun_res = run_pipeline(
+        PipelineConfig(repo_root=REPO_ROOT, feeds_path=REPO_ROOT / "radar" / "feeds.yaml"),
+        seen=SeenState(),
+        pending=pending,
+        mode="enforce",
+        run_coherence_gate=True,
+        offline_candidates=[],
+        llm_client=_SundayApproveLLM(),
+        now=now,
+    )
+    assert sun_res.candidate_summaries[0].discovered_feed_url == "https://sunday.example.dev/feed.xml"
+    _, sun_health = apply_run_result_to_state(
+        SeenState(), FeedHealthState(), sun_res, registry=registry
+    )
+    assert (
+        sun_health.unsubscribed_domain_hits["sunday.example.dev"].discovered_feed_url
+        == "https://sunday.example.dev/feed.xml"
+    )
+
+
+def test_bootstrap_observe_isolation_and_reconcile_marker_dedupe() -> None:
+    from scripts.radar.models import FeedFetchSummary, RunResult
+    from scripts.radar.state import apply_run_result_to_state
+
+    registry = load_feed_registry(REPO_ROOT / "radar" / "feeds.yaml")
+    now = datetime(2026, 11, 22, 13, 0, tzinfo=UTC)
+    now_iso = now.isoformat()
+
+    # 1. Bootstrap mode MUST NOT inflate items_fetched or enforce_items_fetched
+    boot_res = RunResult(
+        run_at=now_iso,
+        iso_week="2026-W47",
+        mode="bootstrap",
+        feed_summaries=[FeedFetchSummary(feed_id="openai-news", ok=True, raw_count=10, new_count=10)],
+    )
+    _, health = apply_run_result_to_state(SeenState(), FeedHealthState(), boot_res, registry=registry)
+    assert health.feeds["openai-news"].items_fetched == 0
+    assert health.feeds["openai-news"].enforce_items_fetched == 0
+    assert health.feeds["openai-news"].last_success_at == now_iso
+
+    # 2. 40 items fetched in observe mode MUST NOT trigger false "0 human-merged items in window"
+    obs_res = RunResult(
+        run_at=now_iso,
+        iso_week="2026-W47",
+        mode="observe",
+        feed_summaries=[FeedFetchSummary(feed_id="openai-news", ok=True, raw_count=40, new_count=40)],
+    )
+    _, health = apply_run_result_to_state(SeenState(), health, obs_res, registry=registry)
+    assert health.feeds["openai-news"].items_fetched == 40
+    assert health.feeds["openai-news"].enforce_items_fetched == 0
+    obs_report = generate_feed_health_report(health, registry, now=now)
+    assert "0 human-merged items in window" not in obs_report
+
+    # 3. >= 30 items fetched specifically in enforce mode DOES trigger prune check
+    enf_res = RunResult(
+        run_at=now_iso,
+        iso_week="2026-W47",
+        mode="enforce",
+        feed_summaries=[FeedFetchSummary(feed_id="openai-news", ok=True, raw_count=30, new_count=30)],
+    )
+    _, health = apply_run_result_to_state(SeenState(), health, enf_res, registry=registry)
+    assert health.feeds["openai-news"].enforce_items_fetched == 30
+    enf_report = generate_feed_health_report(health, registry, now=now)
+    assert "0 human-merged items in window" in enf_report
+
+    # 4. [P2-1] Duplicate item_id markers in reconcile_pr_outcome are deduplicated
+    rec_health = reconcile_pr_outcome(
+        FeedHealthState(),
+        registry,
+        pr_number=99,
+        merged=True,
+        staged_markers=[
+            ("111111111111", "hn-agentic", "github.com/acme/tool"),
+            ("111111111111", "hn-agentic", "github.com/acme/tool"),
+            ("222222222222", "openai-news", "openai.com"),
+            ("222222222222", "openai-news", "openai.com"),
+        ],
+        landed_item_ids={"111111111111"},
+        reconciled_at=now_iso,
+    )
+    assert rec_health.feeds["hn-agentic"].human_merged == 1
+    assert rec_health.feeds["openai-news"].human_closed_rejected == 1
+    assert rec_health.unsubscribed_domain_hits["github.com/acme/tool"].merged_item_ids == [
+        "111111111111"
+    ]
+
+
+def test_workflow_radar_ingest_hygiene_and_privilege_separation() -> None:
+    workflow_text = (REPO_ROOT / ".github" / "workflows" / "radar-ingest.yml").read_text(
+        encoding="utf-8"
+    )
+    # Job 1 fetches feed-health.json read-only and passes --health-path
+    assert "for f in seen.json pending-candidates.json feed-health.json; do" in workflow_text
+    assert "--health-path /tmp/radar-state-read/feed-health.json" in workflow_text
+    # Job 2 passes --summary-out to reconcile_prs reconcile
+    assert '--summary-out "$GITHUB_STEP_SUMMARY"' in workflow_text
+    # Job 2 checks out existing remote weekly branch even if HAS_OPEN_PR is false
+    assert 'if git ls-remote --exit-code --heads origin "$BRANCH" >/dev/null 2>&1; then' in workflow_text
+    # Job 2 posts a PR comment when updating an already-open weekly PR (non-fatal warning on comment error)
+    assert 'gh pr comment "$BRANCH" --body-file /tmp/radar-pr-body.md ||' in workflow_text
+
+
+def test_combined_fast_lane_with_coherence_gate_and_90d_window_expiry() -> None:
+    from scripts.radar.cli import build_job_summary_markdown
+    from scripts.radar.fetcher import make_item_id
+    from scripts.radar.models import CandidateSummary, DomainHitRecord, RunResult
+
+    registry = load_feed_registry(REPO_ROOT / "radar" / "feeds.yaml")
+    now = datetime(2026, 11, 22, 13, 0, tzinfo=UTC)
+    now_iso = now.isoformat()
+    old_iso = datetime(2026, 7, 1, 12, 0, tzinfo=UTC).isoformat()  # >90 days before now
+
+    fl_url = "https://fastblog.example.dev/post-1"
+    agg_url = "https://aggblog.example.dev/post-1"
+    fl_id = make_item_id(fl_url)
+    agg_id = make_item_id(agg_url)
+
+    combined_result = RunResult(
+        run_at=now_iso,
+        iso_week="2026-W47",
+        mode="enforce",
+        fast_lane_url=fl_url,
+        run_coherence_gate=True,
+        drained_item_ids=[agg_id],
+        has_high_signal=True,
+        candidate_summaries=[
+            CandidateSummary(
+                item_id=fl_id,
+                feed_id="fast-lane",
+                feed_name="Manual Fast-Lane",
+                title="Fast-Lane Post",
+                url=fl_url,
+                canonical_url=fl_url,
+                domain="fastblog.example.dev",
+            ),
+            CandidateSummary(
+                item_id=agg_id,
+                feed_id="hn-agentic",
+                feed_name="Hacker News",
+                title="Drained Aggregator Post",
+                url=agg_url,
+                canonical_url=agg_url,
+                domain="aggblog.example.dev",
+            ),
+        ],
+        stage3_verdict=Stage3CoherenceVerdict(
+            decision="APPROVE_SYNTHESIS",
+            executive_summary="Approved both.",
+            item_audits=[
+                Stage3ItemAudit(
+                    item_id=fl_id,
+                    verdict="APPROVE_SYNTHESIS",
+                    poisons=SystemicPoisonFlags(),
+                    rationale="Strong delta.",
+                ),
+                Stage3ItemAudit(
+                    item_id=agg_id,
+                    verdict="APPROVE_SYNTHESIS",
+                    poisons=SystemicPoisonFlags(),
+                    rationale="Strong delta.",
+                ),
+            ],
+            syntheses=[
+                Stage3SynthesisProposal(
+                    title="Combined Synthesis",
+                    source_item_ids=[fl_id, agg_id],
+                    target_repo_files=["playbooks/harness-loop-graph.md"],
+                    unified_thesis="Unified.",
+                    proposed_repo_changes="Tighten section.",
+                )
+            ],
+        ),
+    )
+
+    summary = build_job_summary_markdown(combined_result, health=FeedHealthState(), registry=registry)
+    # 1. Combined run with drained items preserves High Signal = yes instead of "n/a — direct Stage 3"
+    assert "(High Signal ≥ 9/10: `yes`)" in summary
+    assert "n/a — direct Stage 3" not in summary
+    # 2. Fast-lane 1-hit serial_publisher appears, while 1-hit drained aggregator source stays suppressed
+    assert "`fastblog.example.dev`" in summary
+    assert "`aggblog.example.dev`" not in summary
+
+    # 3. 90-day expiry excludes stale hits outside the evaluation window
+    stale_health = FeedHealthState(
+        unsubscribed_domain_hits={
+            "stale.example.dev": DomainHitRecord(
+                merged_item_ids=["111111111111"],
+                merged_dates=[old_iso],
+                approved_item_ids=["222222222222"],
+                approved_dates=[now_iso],
+                source_class="serial_publisher",
+            )
+        }
+    )
+    report = generate_feed_health_report(stale_health, registry, now=now)
+    assert "stale.example.dev" not in report
+
+
+

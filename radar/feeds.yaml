@@ -4,8 +4,8 @@
 # - This file on `main` is strictly human-edited. Automation NEVER mutates it.
 # - Every source is scrape-free (RSS/Atom, GitHub Releases Atom, or public JSON API).
 # - Quarterly pruning removes sources with 0 human-merged items in 90d, >90% rejection,
-#   or >=3 consecutive fetch errors. Unsubscribed domains with >=2 human-merged items
-#   in 90d are surfaced in the health report as manual promotion candidates.
+#   or >=3 consecutive fetch errors. Unsubscribed sources with >=2 merged or
+#   Stage 3-approved items in 90d are surfaced in the health report as manual promotion candidates.
 
 version: 1
 
@@ -47,6 +47,8 @@ feeds:
     name: Anthropic Engineering Blog (Community RSS Mirror)
     type: rss
     url: https://raw.githubusercontent.com/Olshansk/rss-feeds/main/feeds/feed_anthropic_engineering.xml
+    source_domains:
+      - anthropic.com
     category: vendor
     max_items: 10
     notes: Anthropic has no official RSS feed; hourly community XML mirror treated as untrusted input.
@@ -59,6 +61,7 @@ feeds:
     category: vendor-release
     max_items: 10
     filter_patch_releases: true
+    filter_prereleases: true
     keywords:
       - code mode
       - hook
@@ -111,6 +114,7 @@ feeds:
     category: vendor-release
     max_items: 10
     filter_patch_releases: true
+    filter_prereleases: true
     keywords:
       - mcp
       - skill
@@ -161,6 +165,8 @@ feeds:
     name: Addy Osmani — Agentic Engineering Blog
     type: rss
     url: https://addyosmani.com/rss.xml
+    source_domains:
+      - addyo.substack.com
     category: practitioner
     max_items: 10
     use_default_keywords: true
