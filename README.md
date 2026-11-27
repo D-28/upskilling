@@ -73,8 +73,12 @@ Don't read the repo front-to-back like a textbook—build the core mental frame 
 | **[`skills/grill-to-spec/SKILL.md`](skills/grill-to-spec/SKILL.md)** | Socratic grill → `GLOSSARY.md` + ADRs + spec + tracer-bullet slices | G |
 | **[`skills/diff-review/SKILL.md`](skills/diff-review/SKILL.md)** | Base-branch `REVIEW.md` + diff-triggered checklist reviewer | B |
 | **[`skills/ste-clarity/SKILL.md`](skills/ste-clarity/SKILL.md)** | Two-way `STE-80` clarity & Karpathy's 4-Level Understanding Ladder (`text → diagram → HTML → animation`) | H, B, C |
+| **[`REVIEW.md`](REVIEW.md)** | Active base-branch diff-review rubric and diff-triggered reliability checklist for this repo | B, H |
 | **[`scripts/ste_lint.py`](scripts/ste_lint.py)** | Deterministic `STE-80` linter (`--stats`, `--check`, `--json`) for `AGENTS.md` and `SKILL.md` | H, C, D |
+| **[`scripts/diff_context.py`](scripts/diff_context.py)** | Stdlib-only git diff & base-branch `REVIEW.md` trigger-matching JSON wrapper | B, D |
+| **[`scripts/test_summary.py`](scripts/test_summary.py)** | Stdlib-only pytest / JUnit XML bounded JSON summary wrapper (preserves exit code) | B, D |
 | **[`scripts/install-skills.sh`](scripts/install-skills.sh)** | Cross-machine, idempotent installer (symlink or `--copy`) for `skills/*/` across Antigravity, Copilot CLI, Claude Code, and custom `--target` paths | Portability |
+| **[`examples/`](examples/testing/README.md)** | Reusable base-branch review CI workflow ([`base-branch-review.yml`](examples/workflows/base-branch-review.yml)) and runnable Python/TS property & differential test starters | B, D |
 | **[`templates/AGENTS.md.template`](templates/AGENTS.md.template)** | Lean root map, `done_when` contract, "Write It Twice" table, `STE-80` output contract | B, C, H |
 | **[`templates/REVIEW.md.template`](templates/REVIEW.md.template)** | Base-branch rubric, diff-triggered checks (incl. `STE-80` rule checkability), empirical promotion | B, H |
 | **[`templates/GLOSSARY-and-ADR.md`](templates/GLOSSARY-and-ADR.md)** | Domain glossary (ASD-STE100 Rule 1.11), lightweight ADR, and tracer-bullet ticket formats | G, H |

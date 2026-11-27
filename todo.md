@@ -22,11 +22,9 @@ A living tracker for ideas, hands-on experiments, toolkit upgrades, and Staff SW
 - [x] **Cross-machine installer (`scripts/install-skills.sh`):** Built [`scripts/install-skills.sh`](scripts/install-skills.sh) (macOS/Linux-safe, idempotent) to symlink or `--copy` [`skills/*/`](skills/verify/SKILL.md) into Antigravity (`~/.gemini/jetski/skills` / `.agent/skills`), GitHub Copilot CLI (`~/.copilot/skills` / `.github/skills`), Claude Code (`~/.claude/skills` / `.claude/skills`), and custom `--target` paths (e.g. Codex), with `--dry-run`, `--scope user|repo`, `--force`, `--uninstall`, and automated tests in [`tests/test_install_skills.py`](tests/test_install_skills.py).
 - [ ] **Stress-test `/verify` (`[B]`):** Trial [`skills/verify/SKILL.md`](skills/verify/SKILL.md) on a real personal project in Antigravity (using Chrome DevTools MCP or local API checks) and refine a Copilot CLI-friendly adaptation for work repos.
 - [ ] **Roll out `observe`-mode commit gate (`[B]`):** Test the `.githooks/commit-msg` starter script from [`hooks/verify-gate-observe.md`](hooks/verify-gate-observe.md) in `observe` mode on a real repo, measure false positives, and test toggling `enforce` with the 2-block escape hatch.
-- [ ] **Code-Mode-style helper wrappers (`[D]`):** Create lightweight deterministic wrapper scripts (`scripts/`, extending the `--json` pattern in [`scripts/ste_lint.py`](scripts/ste_lint.py)) that aggregate/filter noisy git, test, and API/MCP outputs into crisp JSON summaries—capturing [`playbooks/programmatic-tooling-mcp.md`](playbooks/programmatic-tooling-mcp.md) savings inside enterprise GitHub Copilot CLI environments where experimental Code Mode isn't available.
-- [ ] **Runnable property & differential test starters (`[B]`):** Add minimal copy-paste examples of:
-  - Property-based tests (`fast-check` for TS/JS, `Hypothesis` for Python) covering round-trip, invariant, idempotency, and equivalence.
-  - Differential test harness comparing legacy vs. migrated implementations on sampled inputs.
-- [ ] **Base-branch `REVIEW.md` CI workflow example (`[B]`):** Add a GitHub Actions workflow template demonstrating fetching `REVIEW.md` strictly from `origin/main` (never PR head) and running diff-triggered checks cleanly.
+- [x] **Code-Mode-style helper wrappers (`[D]`):** Built stdlib-only [`scripts/diff_context.py`](scripts/diff_context.py) (base-branch `REVIEW.md` diff-trigger matcher + `NO UNDO` workflow detector) and [`scripts/test_summary.py`](scripts/test_summary.py) (bounded pytest / JUnit XML JSON summary wrapper), tested in [`tests/test_wrappers.py`](tests/test_wrappers.py).
+- [x] **Runnable property & differential test starters (`[B]`):** Added runnable Python (`Hypothesis`) and copy-paste TypeScript (`fast-check`) starters under [`examples/testing/`](examples/testing/README.md) covering round-trip, idempotency, invariant preservation, and differential legacy-vs-refactored equivalence (wired into CI `pytest`).
+- [x] **Base-branch `REVIEW.md` CI workflow example (`[B]`):** Activated root [`REVIEW.md`](REVIEW.md) (wired into [`.github/workflows/radar-ci.yml`](.github/workflows/radar-ci.yml)) and added reusable [`examples/workflows/base-branch-review.yml`](examples/workflows/base-branch-review.yml) loading `REVIEW.md` strictly from `origin/<base_ref>`.
 
 ---
 
@@ -70,6 +68,7 @@ Spec & vertical tickets: [`docs/specs/coherence-gate-and-fast-lane.md`](docs/spe
 - [x] **Ticket 1:** Fast-Lane Plan B resolution, `FETCH_INCOMPLETE` fail-closed gate, `force` / non-burning `observe` fast-lane, and rich GitHub Actions Job Summary tables (PR #9).
 - [x] **Ticket 2:** Mon–Sat holding buffer (`radar-state/pending-candidates.json`) decoupling daily sweeps from Sunday weekly gate runs (PR #10).
 - [x] **Ticket 3:** Stage 3 `gemini-4-neon` (`HIGH`) full-repo Coherence Gate (score-blind de-anchoring, 6 Systemic Poison checks, zero-PR default + `weekly-audits.md`, fast-lane Stage 1 bypass; PR #11 + live stress-test verified in run `#45198504002` + `800`/`500` render-cap polish in PR #12).
+- [x] **Source-promotion tracking & pipeline audit hardening (PR #18):** Added Stage 0 hygiene, accurate wall detection, source-promotion domain tracking, full synthesis prose rendering, and workflow hardening.
 - [ ] **Future consideration (if needed):** If Plan B repeatedly fails (`FETCH_INCOMPLETE`) on paywalled or X-Article links, add an Antigravity local browser/CLI fallback (`$0` marginal API spend using Google AI Pro/Ultra sub) that evaluates logged-in page text locally against the Coherence Gate.
 
 ---

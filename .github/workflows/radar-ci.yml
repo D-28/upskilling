@@ -4,24 +4,28 @@ on:
   pull_request:
     paths:
       - "pyproject.toml"
+      - "REVIEW.md"
       - "radar/feeds.yaml"
       - "scripts/**"
       - "tests/**"
       - "skills/**"
       - "templates/**"
       - "docs/**"
+      - "examples/**"
       - ".github/workflows/radar-*.yml"
   push:
     branches:
       - main
     paths:
       - "pyproject.toml"
+      - "REVIEW.md"
       - "radar/feeds.yaml"
       - "scripts/**"
       - "tests/**"
       - "skills/**"
       - "templates/**"
       - "docs/**"
+      - "examples/**"
       - ".github/workflows/radar-*.yml"
 
 permissions:
@@ -43,14 +47,14 @@ jobs:
         run: uv sync
 
       - name: Lint Python with ruff
-        run: uv run ruff check scripts tests skills
+        run: uv run ruff check scripts tests skills examples
 
       - name: Enforce STE-80 instruction grammar (Write It Twice)
         # Strict <=20w on imperative instructions; descriptive <=25w on docs/templates.
         # radar/*.md digests are intentionally excluded so verbatim external titles/quotes never fail CI.
         run: |
           uv run python scripts/ste_lint.py --stats --check --strict-20 skills/*/SKILL.md templates/AGENTS.md.template
-          uv run python scripts/ste_lint.py --stats --check templates/*.md templates/REVIEW.md.template docs/radar-setup.md
+          uv run python scripts/ste_lint.py --stats --check REVIEW.md templates/*.md templates/REVIEW.md.template docs/radar-setup.md
 
       - name: Run unit, property, and offline E2E tests
         run: uv run pytest -v
