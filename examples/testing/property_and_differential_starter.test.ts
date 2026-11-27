@@ -62,7 +62,7 @@ function legacySummarizeEvents(events: EventItem[]): SummaryOutput {
 }
 
 function refactoredSummarizeEvents(events: EventItem[]): SummaryOutput {
-  const counts: Record<string, number> = {};
+  const counts: Record<string, number> = Object.create(null) as Record<string, number>;
   for (const ev of events) {
     const kind = normalizeTag(ev.kind);
     if (kind) counts[kind] = (counts[kind] ?? 0) + ev.weight;
@@ -77,7 +77,7 @@ function refactoredSummarizeEvents(events: EventItem[]): SummaryOutput {
 
 function normalizeForDiff(out: SummaryOutput): { totals: Array<{ kind: string; weight: number }> } {
   return {
-    totals: [...out.totals].sort((a, b) => a.kind.localeCompare(b.kind)),
+    totals: [...out.totals].sort((a, b) => (a.kind < b.kind ? -1 : a.kind > b.kind ? 1 : 0)),
   };
 }
 
@@ -109,7 +109,7 @@ describe("Property & Differential Test Starter", () => {
     );
   });
 
-  it("3. invariants: rankTopK preserves length and descending order", () => {
+  it("3. invariants: rankTopK preserves length, descending order, and threshold", () => {
     fc.assert(
       fc.property(
         fc.array(fc.integer({ min: -1000, max: 1000 }), { maxLength: 40 }),
@@ -119,6 +119,10 @@ describe("Property & Differential Test Starter", () => {
           expect(top.length).toBe(Math.min(scores.length, k));
           for (let i = 0; i + 1 < top.length; i++) {
             expect(top[i]).toBeGreaterThanOrEqual(top[i + 1]);
+          }
+          if (top.length > 0 && scores.length > k) {
+            const sortedDesc = [...scores].sort((a, b) => b - a);
+            expect(Math.min(...top)).toBeGreaterThanOrEqual(sortedDesc[k]);
           }
         },
       ),

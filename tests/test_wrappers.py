@@ -73,7 +73,10 @@ def test_glob_match_patterns() -> None:
     assert glob_match("skills/verify/SKILL.md", "skills/*/SKILL.md")
     assert not glob_match("skills/a/b/SKILL.md", "skills/*/SKILL.md")
     assert glob_match(".github/workflows/radar-ci.yml", ".github/workflows/*.yml")
+    assert not glob_match("github/workflows/radar-ci.yml", ".github/workflows/*.yml")
+    assert not glob_match(".env", "env")
     assert not glob_match(".github/workflows/sub/radar-ci.yml", ".github/workflows/*.yml")
+    assert glob_match("./.github/workflows/radar-ci.yml", ".github/workflows/*.yml")
     assert glob_match("a/b.py", "a/**/b.py")
     assert glob_match("a/x/y/b.py", "a/**/b.py")
 
@@ -135,6 +138,8 @@ def test_diff_context_invalid_ref_raises_and_cli_exits_nonzero(tmp_path: Path) -
     repo = _init_repo(tmp_path)
     with pytest.raises(DiffContextError, match="no-such-ref"):
         collect_diff_context(repo, base_ref="no-such-ref", head_ref="HEAD")
+    with pytest.raises(DiffContextError, match="start with '-'"):
+        collect_diff_context(repo, base_ref="--all", head_ref="HEAD")
 
     proc = subprocess.run(
         [

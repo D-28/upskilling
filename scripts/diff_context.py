@@ -59,12 +59,23 @@ def _run_git(repo_root: Path, *args: str) -> subprocess.CompletedProcess[str]:
         ["git", "-C", str(repo_root), *args],
         capture_output=True,
         text=True,
+        encoding="utf-8",
+        errors="replace",
         check=False,
     )
 
 
 def _resolve_commit(repo_root: Path, ref: str) -> str:
-    proc = _run_git(repo_root, "rev-parse", "--verify", "--quiet", f"{ref}^{{commit}}")
+    if not ref or ref.startswith("-"):
+        raise DiffContextError(f"Invalid git ref '{ref}': ref must not be empty or start with '-'")
+    proc = _run_git(
+        repo_root,
+        "rev-parse",
+        "--verify",
+        "--quiet",
+        "--end-of-options",
+        f"{ref}^{{commit}}",
+    )
     if proc.returncode != 0:
         detail = proc.stderr.strip() or f"invalid git ref: {ref}"
         raise DiffContextError(f"Cannot resolve git ref '{ref}': {detail}")
@@ -97,9 +108,17 @@ def _parse_numstat_z(raw: str) -> list[FileStat]:
     return files
 
 
+def _normalize_posix_path(raw: str) -> str:
+    """Strip leading './' and '/' without stripping leading dots from dotfiles."""
+    norm = raw.strip()
+    while norm.startswith("./"):
+        norm = norm[2:]
+    return norm.lstrip("/")
+
+
 def glob_to_regex(pattern: str) -> re.Pattern[str]:
     """Translate a POSIX path glob (supporting *, **, ?) into a compiled regex."""
-    norm = pattern.strip().lstrip("./")
+    norm = _normalize_posix_path(pattern)
     if norm.endswith("/"):
         norm = f"{norm}**"
 
@@ -131,7 +150,7 @@ def glob_to_regex(pattern: str) -> re.Pattern[str]:
 
 def glob_match(path: str, pattern: str) -> bool:
     """Return True if repo-relative path matches POSIX glob pattern."""
-    norm_path = path.strip().lstrip("./")
+    norm_path = _normalize_posix_path(path)
     return bool(glob_to_regex(pattern).match(norm_path))
 
 

@@ -40,6 +40,8 @@ class FailureRecord:
 
 def truncate_text(text: str, max_chars: int) -> str:
     """Deterministically cap text to at most max_chars characters."""
+    if max_chars < 1:
+        raise ValueError("max_chars must be >= 1")
     cleaned = text.strip()
     if len(cleaned) <= max_chars:
         return cleaned
@@ -72,6 +74,10 @@ def parse_junit_xml(
     exit_code: int | None = None,
 ) -> dict[str, object]:
     """Parse a JUnit XML file into a bounded summary dictionary."""
+    if max_failures < 0:
+        raise ValueError("max_failures must be >= 0")
+    if max_excerpt_chars < 1:
+        raise ValueError("max_excerpt_chars must be >= 1")
     if not xml_path.is_file():
         raise TestSummaryError(f"JUnit XML file not found: {xml_path}")
     try:
@@ -154,6 +160,11 @@ def parse_junit_xml(
     }
 
 
+def _combine_runner_output(stderr: str, stdout: str) -> str:
+    parts = [p.strip() for p in (stderr, stdout) if p and p.strip()]
+    return "\n".join(parts)
+
+
 def run_pytest_summary(
     pytest_args: list[str],
     *,
@@ -164,7 +175,15 @@ def run_pytest_summary(
     with tempfile.TemporaryDirectory(prefix="test-summary-") as tmp_dir:
         xml_path = Path(tmp_dir) / "junit.xml"
         cmd = [sys.executable, "-m", "pytest", f"--junitxml={xml_path}", *pytest_args]
-        proc = subprocess.run(cmd, capture_output=True, text=True, check=False)
+        proc = subprocess.run(
+            cmd,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            check=False,
+        )
+        combined_output = _combine_runner_output(proc.stderr, proc.stdout)
 
         if xml_path.is_file():
             payload = parse_junit_xml(
@@ -173,10 +192,8 @@ def run_pytest_summary(
                 max_excerpt_chars=max_excerpt_chars,
                 exit_code=proc.returncode,
             )
-            if proc.returncode != 0 and not payload["failures"]:
-                stderr_excerpt = truncate_text(proc.stderr or proc.stdout, max_excerpt_chars)
-                if stderr_excerpt:
-                    payload["runner_excerpt"] = stderr_excerpt
+            if proc.returncode != 0 and not payload["failures"] and combined_output:
+                payload["runner_excerpt"] = truncate_text(combined_output, max_excerpt_chars)
             return payload
 
         return {
@@ -190,7 +207,7 @@ def run_pytest_summary(
             "failures_truncated": 0,
             "failures": [],
             "runner_excerpt": truncate_text(
-                (proc.stderr or proc.stdout or "pytest exited without JUnit XML"),
+                combined_output or "pytest exited without JUnit XML",
                 max_excerpt_chars,
             ),
         }
