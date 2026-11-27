@@ -4,8 +4,8 @@
 # - This file on `main` is strictly human-edited. Automation NEVER mutates it.
 # - Every source is scrape-free (RSS/Atom, GitHub Releases Atom, or public JSON API).
 # - Quarterly pruning removes sources with 0 human-merged items in 90d, >90% rejection,
-#   or >=3 consecutive fetch errors. Unsubscribed domains with >=2 human-merged items
-#   in 90d are surfaced in the health report as manual promotion candidates.
+#   or >=3 consecutive fetch errors. Unsubscribed sources with >=2 merged or
+#   Stage 3-approved items in 90d are surfaced in the health report as manual promotion candidates.
 
 version: 1
 

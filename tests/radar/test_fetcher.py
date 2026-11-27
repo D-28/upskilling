@@ -776,4 +776,127 @@ def test_fast_lane_plan_b_x_oembed_uses_redirected_x_url_and_discovers_feed(
     assert item.discovered_feed_url == "https://blog.example.dev/atom.xml"
 
 
+def test_diff_review_regressions_source_keys_prereleases_titles_and_blob_budget(
+    tmp_path: Path,
+) -> None:
+    import pytest
+
+    from scripts.radar.fetcher import (
+        FetchIncompleteError,
+        build_fast_lane_candidate,
+        classify_source,
+        extract_source_key,
+        is_prerelease_version,
+        is_source_subscribed,
+        subscribed_source_keys,
+    )
+
+    config = PipelineConfig(repo_root=tmp_path, feeds_path=tmp_path / "feeds.yaml")
+
+    # 1. dev.to/feed/<author> scopes identically to dev.to/<author>/<slug>, and bare shared hosts are one_off_artifact
+    assert extract_source_key("https://dev.to/feed/Alice") == "dev.to/alice"
+    reg = FeedRegistry(
+        feeds=[
+            FeedEntry(
+                id="devto-alice",
+                name="Alice on DEV",
+                type="rss",
+                url="https://dev.to/feed/alice",
+            )
+        ]
+    )
+    assert is_source_subscribed("dev.to/alice", subscribed_source_keys(reg)) is True
+    assert classify_source("https://medium.com/some-pub/post") == "one_off_artifact"
+    assert classify_source("https://substack.com/home/post/p-123") == "one_off_artifact"
+    assert classify_source("https://dev.to/t/ai") == "one_off_artifact"
+
+    # 2. Stable release titles containing hyphenated prose (-dev, -preview, -beta) must NOT be dropped
+    assert is_prerelease_version("v2.2.0: Add local-dev sandbox and live-preview hooks") is False
+    assert is_prerelease_version("v1.3.0: public-beta MCP support") is False
+    assert is_prerelease_version("codex-nightly") is True
+    assert is_prerelease_version("v0.4.0-preview") is True
+    assert is_prerelease_version("Release 2.0", "https://github.com/org/repo/releases/tag/v2.0.0-rc.1") is True
+
+    # 3. Escaped <template> in <title> must not truncate title via double HTML parsing
+    long_body = " ".join(["Verification engineering invariants prevent regressions in agentic workflows."] * 22)
+    escaped_title_html = (
+        f"<html><head><title>Why &lt;template&gt; breaks naive scrapers</title></head>"
+        f"<body><article><p>{long_body}</p></article></body></html>"
+    ).encode()
+    titled_item = build_fast_lane_candidate(
+        "https://blog.example.dev/template-post",
+        config=config,
+        http_get=lambda u: (u, escaped_title_html),
+    )
+    assert "breaks naive scrapers" in titled_item.title
+
+    # 4. Non-Markdown GitHub code blobs must NOT treat `# comment` as an H1 title
+    py_blob = "https://github.com/acme/tool/blob/main/scripts/run.py"
+    py_raw = "https://raw.githubusercontent.com/acme/tool/main/scripts/run.py"
+    py_code = ("# Copyright 2026 Acme Corp\n" + ("def verify_step():\n    return 'deterministic harness check'\n" * 20)).encode()
+    py_item = build_fast_lane_candidate(py_blob, config=config, http_get=lambda u: (u, py_code if u == py_raw else b""))
+    assert py_item.title == "acme/tool/scripts/run.py"
+
+    # 5. Thin raw GitHub blob fails closed WITHOUT falling back to GitHub HTML chrome
+    thin_blob = "https://github.com/acme/tool/blob/main/README.md"
+    thin_raw = "https://raw.githubusercontent.com/acme/tool/main/README.md"
+    chrome_html = (
+        "<html><head><title>GitHub</title></head><body>"
+        + ("<div>GitHub navigation sidebar footer chrome text for repository view.</div>" * 30)
+        + "</body></html>"
+    ).encode()
+    thin_calls: list[str] = []
+
+    def _thin_blob_getter(u: str) -> tuple[str, bytes]:
+        thin_calls.append(u)
+        if u == thin_raw:
+            return u, b"# Tiny\nToo short."
+        return u, chrome_html
+
+    with pytest.raises(FetchIncompleteError, match="FETCH_INCOMPLETE"):
+        build_fast_lane_candidate(thin_blob, config=config, http_get=_thin_blob_getter)
+    assert thin_calls == [thin_raw]
+
+    thin_survivor = CandidateItem(
+        item_id=make_item_id(thin_blob),
+        feed_id="hn-agentic",
+        feed_name="HN",
+        title="Tiny",
+        url=thin_blob,
+        canonical_url=thin_blob,
+        domain="github.com/acme/tool",
+        body="short",
+    )
+    thin_calls.clear()
+    blocked_thin = enrich_survivor_body(thin_survivor, config=config, http_get=_thin_blob_getter)
+    assert blocked_thin.enrichment_status == "fetch_blocked"
+    assert thin_calls == [thin_raw]
+
+    # 6. Plan B MAX_PLAN_B_FETCHES = 3 cap holds strictly per actual HTTP request on GitHub blob links
+    stub_with_3_blobs = (
+        b"<html><head><title>Stub</title></head><body>Short stub "
+        b'<a href="https://github.com/a/b/blob/main/1.md">1</a>'
+        b'<a href="https://github.com/a/b/blob/main/2.md">2</a>'
+        b'<a href="https://github.com/a/b/blob/main/3.md">3</a>'
+        b"</body></html>"
+    )
+    plan_b_calls: list[str] = []
+
+    def _failing_blobs_getter(u: str) -> tuple[str, bytes]:
+        plan_b_calls.append(u)
+        if u == "https://stub.example.dev/list":
+            return u, stub_with_3_blobs
+        raise OSError("HTTP 404")
+
+    with pytest.raises(FetchIncompleteError):
+        build_fast_lane_candidate(
+            "https://stub.example.dev/list",
+            config=config,
+            http_get=_failing_blobs_getter,
+        )
+    # 1 initial fetch + at most MAX_PLAN_B_FETCHES (3) extra fetches = 4 total HTTP calls
+    assert len(plan_b_calls) == 4
+
+
+
 

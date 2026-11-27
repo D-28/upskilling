@@ -2606,7 +2606,104 @@ def test_workflow_radar_ingest_hygiene_and_privilege_separation() -> None:
     assert '--summary-out "$GITHUB_STEP_SUMMARY"' in workflow_text
     # Job 2 checks out existing remote weekly branch even if HAS_OPEN_PR is false
     assert 'if git ls-remote --exit-code --heads origin "$BRANCH" >/dev/null 2>&1; then' in workflow_text
-    # Job 2 posts a PR comment when updating an already-open weekly PR
-    assert 'gh pr comment "$BRANCH" --body-file /tmp/radar-pr-body.md' in workflow_text
+    # Job 2 posts a PR comment when updating an already-open weekly PR (non-fatal warning on comment error)
+    assert 'gh pr comment "$BRANCH" --body-file /tmp/radar-pr-body.md ||' in workflow_text
+
+
+def test_combined_fast_lane_with_coherence_gate_and_90d_window_expiry() -> None:
+    from scripts.radar.cli import build_job_summary_markdown
+    from scripts.radar.fetcher import make_item_id
+    from scripts.radar.models import CandidateSummary, DomainHitRecord, RunResult
+
+    registry = load_feed_registry(REPO_ROOT / "radar" / "feeds.yaml")
+    now = datetime(2026, 11, 22, 13, 0, tzinfo=UTC)
+    now_iso = now.isoformat()
+    old_iso = datetime(2026, 7, 1, 12, 0, tzinfo=UTC).isoformat()  # >90 days before now
+
+    fl_url = "https://fastblog.example.dev/post-1"
+    agg_url = "https://aggblog.example.dev/post-1"
+    fl_id = make_item_id(fl_url)
+    agg_id = make_item_id(agg_url)
+
+    combined_result = RunResult(
+        run_at=now_iso,
+        iso_week="2026-W47",
+        mode="enforce",
+        fast_lane_url=fl_url,
+        run_coherence_gate=True,
+        drained_item_ids=[agg_id],
+        has_high_signal=True,
+        candidate_summaries=[
+            CandidateSummary(
+                item_id=fl_id,
+                feed_id="fast-lane",
+                feed_name="Manual Fast-Lane",
+                title="Fast-Lane Post",
+                url=fl_url,
+                canonical_url=fl_url,
+                domain="fastblog.example.dev",
+            ),
+            CandidateSummary(
+                item_id=agg_id,
+                feed_id="hn-agentic",
+                feed_name="Hacker News",
+                title="Drained Aggregator Post",
+                url=agg_url,
+                canonical_url=agg_url,
+                domain="aggblog.example.dev",
+            ),
+        ],
+        stage3_verdict=Stage3CoherenceVerdict(
+            decision="APPROVE_SYNTHESIS",
+            executive_summary="Approved both.",
+            item_audits=[
+                Stage3ItemAudit(
+                    item_id=fl_id,
+                    verdict="APPROVE_SYNTHESIS",
+                    poisons=SystemicPoisonFlags(),
+                    rationale="Strong delta.",
+                ),
+                Stage3ItemAudit(
+                    item_id=agg_id,
+                    verdict="APPROVE_SYNTHESIS",
+                    poisons=SystemicPoisonFlags(),
+                    rationale="Strong delta.",
+                ),
+            ],
+            syntheses=[
+                Stage3SynthesisProposal(
+                    title="Combined Synthesis",
+                    source_item_ids=[fl_id, agg_id],
+                    target_repo_files=["playbooks/harness-loop-graph.md"],
+                    unified_thesis="Unified.",
+                    proposed_repo_changes="Tighten section.",
+                )
+            ],
+        ),
+    )
+
+    summary = build_job_summary_markdown(combined_result, health=FeedHealthState(), registry=registry)
+    # 1. Combined run with drained items preserves High Signal = yes instead of "n/a — direct Stage 3"
+    assert "(High Signal ≥ 9/10: `yes`)" in summary
+    assert "n/a — direct Stage 3" not in summary
+    # 2. Fast-lane 1-hit serial_publisher appears, while 1-hit drained aggregator source stays suppressed
+    assert "`fastblog.example.dev`" in summary
+    assert "`aggblog.example.dev`" not in summary
+
+    # 3. 90-day expiry excludes stale hits outside the evaluation window
+    stale_health = FeedHealthState(
+        unsubscribed_domain_hits={
+            "stale.example.dev": DomainHitRecord(
+                merged_item_ids=["111111111111"],
+                merged_dates=[old_iso],
+                approved_item_ids=["222222222222"],
+                approved_dates=[now_iso],
+                source_class="serial_publisher",
+            )
+        }
+    )
+    report = generate_feed_health_report(stale_health, registry, now=now)
+    assert "stale.example.dev" not in report
+
 
 

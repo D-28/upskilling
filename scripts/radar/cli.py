@@ -187,7 +187,7 @@ def _build_source_consideration_lines(
             continue
         run_ids_by_source.setdefault(source_key, set()).add(iid)
         is_fast_lane_by_source[source_key] = is_fast_lane_by_source.get(source_key, False) or (
-            bool(result.fast_lane_url) or cs.feed_id == "fast-lane"
+            cs.feed_id == "fast-lane"
         )
         if cs.discovered_feed_url:
             discovered_feed_by_source[source_key] = cs.discovered_feed_url
@@ -213,7 +213,8 @@ def _build_source_consideration_lines(
         raw_feed = discovered_feed_by_source.get(source_key) or prior_feed
         feed_url = resolve_feed_hint(source_key, raw_feed)
         if feed_url:
-            feed_clause = f"feed: `{sanitize_single_line(feed_url, 200)}`"
+            safe_feed = sanitize_single_line(feed_url, 200).replace("`", "")
+            feed_clause = f"feed: `{safe_feed}`"
         else:
             feed_clause = "feed: none advertised in HTML"
         hit_label = "1 hit" if total_hits == 1 else f"{total_hits} distinct 90d hits"
@@ -239,7 +240,7 @@ def build_job_summary_markdown(
     )
     high_signal_clause = (
         "(High Signal ≥ 9/10: n/a — direct Stage 3)"
-        if result.fast_lane_url and not result.stage2_results
+        if result.fast_lane_url and not result.stage2_results and not result.drained_item_ids
         else f"(High Signal ≥ 9/10: `{'yes' if result.has_high_signal else 'no'}`)"
     )
     staged_display_count = (
@@ -930,8 +931,9 @@ def apply_run_result_files(
     audit_logged = False
 
     effective_registry = registry
-    if effective_registry is None and repo_root is not None:
-        feeds_file = repo_root / "radar" / "feeds.yaml"
+    if effective_registry is None:
+        candidate_root = repo_root or Path(__file__).resolve().parents[2]
+        feeds_file = candidate_root / "radar" / "feeds.yaml"
         if feeds_file.is_file():
             effective_registry = load_feed_registry(feeds_file)
 

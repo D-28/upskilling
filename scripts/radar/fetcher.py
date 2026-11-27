@@ -30,7 +30,7 @@ from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
 from html.parser import HTMLParser
 from pathlib import Path
-from urllib.parse import parse_qsl, quote, urlencode, urljoin, urlparse, urlunparse
+from urllib.parse import parse_qsl, quote, unquote, urlencode, urljoin, urlparse, urlunparse
 
 import yaml
 
@@ -220,6 +220,8 @@ _ONE_OFF_ARTIFACT_HOSTS = frozenset(
         "mobile.twitter.com",
     }
 )
+_UNSCOPED_SHARED_HOSTS = frozenset({"medium.com", "substack.com", "dev.to"})
+_MARKDOWN_DOC_EXTENSIONS = frozenset({".md", ".markdown", ".mdx", ".txt"})
 _FEED_MIME_TYPES = frozenset(
     {
         "application/rss+xml",
@@ -495,6 +497,12 @@ def extract_source_key(url: str) -> str:
         return "substack.com"
 
     if host == "dev.to":
+        if (
+            len(segs) >= 2
+            and segs[0].lower() == "feed"
+            and segs[1].lower() not in _DEVTO_RESERVED_PATHS
+        ):
+            return f"dev.to/{segs[1].lower()}"
         if len(segs) >= 1 and segs[0].lower() not in _DEVTO_RESERVED_PATHS:
             return f"dev.to/{segs[0].lower()}"
         return "dev.to"
@@ -521,6 +529,9 @@ def classify_source(url: str) -> SourceClass:
     if host in _ONE_OFF_ARTIFACT_HOSTS:
         return "one_off_artifact"
 
+    if extract_source_key(raw) in _UNSCOPED_SHARED_HOSTS:
+        return "one_off_artifact"
+
     return "serial_publisher"
 
 
@@ -530,7 +541,7 @@ def classify_source_key(source_key: str, canonical_url: str = "") -> SourceClass
         return classify_source(canonical_url)
     norm = normalize_source_key(source_key)
     host = norm.split("/", 1)[0]
-    if host == "github.com" or host in _ONE_OFF_ARTIFACT_HOSTS:
+    if host == "github.com" or host in _ONE_OFF_ARTIFACT_HOSTS or norm in _UNSCOPED_SHARED_HOSTS:
         return "one_off_artifact"
     return "serial_publisher"
 
@@ -597,12 +608,15 @@ def is_patch_only_semver(text: str) -> bool:
 
 def is_prerelease_version(title: str, url: str = "") -> bool:
     """Return True if a release title or GitHub release tag represents a pre-release."""
-    if _PRERELEASE_SEMVER_RE.search(title) or _PRERELEASE_TAG_RE.search(title):
+    stripped = title.strip()
+    if _PRERELEASE_SEMVER_RE.search(stripped):
+        return True
+    if stripped and not any(ch.isspace() for ch in stripped) and _PRERELEASE_TAG_RE.search(stripped):
         return True
     if url:
         parts = [p for p in (urlparse(url).path or "").split("/") if p]
         if len(parts) >= 2 and parts[-2].lower() == "tag":
-            tag = parts[-1]
+            tag = unquote(parts[-1])
             if _PRERELEASE_SEMVER_RE.search(tag) or _PRERELEASE_TAG_RE.search(tag):
                 return True
     return False
@@ -1066,7 +1080,7 @@ def _extract_html_title(raw_html: str) -> str:
     if not raw_html:
         return ""
     parser = _parse_plan_b_html(raw_html)
-    return sanitize_single_line(html_to_plain_text(parser.title_text, max_chars=240), max_chars=240)
+    return sanitize_single_line(parser.title_text, max_chars=240)
 
 
 def extract_discovered_feed_url(
@@ -1147,12 +1161,8 @@ def _parse_html_metadata(
     """Extract clean page title, raw `<title>`, SSRF-validated Plan B URLs, and passive feed URL."""
     parser = _parse_plan_b_html(raw_html)
 
-    raw_title = sanitize_single_line(
-        html_to_plain_text(parser.title_text, max_chars=240), max_chars=240
-    )
-    og_title = sanitize_single_line(
-        html_to_plain_text(parser.og_title, max_chars=240), max_chars=240
-    )
+    raw_title = sanitize_single_line(parser.title_text, max_chars=240)
+    og_title = sanitize_single_line(parser.og_title, max_chars=240)
     if raw_title and raw_title.lower() not in _GENERIC_STUB_TITLES:
         title = raw_title
     elif og_title and og_title.lower() not in _GENERIC_STUB_TITLES:
@@ -1252,7 +1262,8 @@ def _try_fetch_github_blob_raw(
     cleaned = re.sub(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]", "", decoded).strip()
     if len(cleaned) > MAX_STAGE2_BODY_CHARS:
         cleaned = cleaned[: MAX_STAGE2_BODY_CHARS - 3].rstrip() + "..."
-    title = _extract_markdown_h1(cleaned) or fallback_title
+    use_h1 = Path(fallback_title.lower()).suffix in _MARKDOWN_DOC_EXTENSIONS
+    title = (_extract_markdown_h1(cleaned) if use_h1 else "") or fallback_title
     return title, cleaned
 
 
@@ -1293,7 +1304,7 @@ def build_fast_lane_candidate(
 
     Plan B resolution sequence for thin/stub pages:
     1. For GitHub `blob/` URLs, attempt clean raw text via `raw.githubusercontent.com` first
-       (preserving the `github.com` canonical URL and falling back to HTML on error).
+       (preserving the `github.com` canonical URL and falling back to HTML only on fetch/binary error).
     2. Follow SSRF-validated `og:url`, `<link rel="canonical">`, or external article links.
     3. For `x.com` / `twitter.com` status URLs (including redirects), query
        `publish.twitter.com/oembed` and follow any embedded external blog links or extract full
@@ -1324,7 +1335,9 @@ def build_fast_lane_candidate(
     initial_item: CandidateItem | None = None
     plan_b_urls: list[str] = []
 
-    # Fast path for GitHub blob URLs (keeps canonical_url on github.com)
+    # Fast path for GitHub blob URLs (keeps canonical_url on github.com).
+    # If the raw file fetched cleanly as valid UTF-8, treat it as authoritative so thin files
+    # fail closed instead of inheriting GitHub HTML chrome.
     raw_blob = _try_fetch_github_blob_raw(
         initial_canonical, getter=getter, use_live_dns=use_live_dns
     )
@@ -1341,64 +1354,73 @@ def build_fast_lane_candidate(
         best_title = blob_title
         best_body = blob_body
         last_reason = blob_reason
-
-    try:
-        final_canonical, decoded = _safe_fetch(initial_canonical)
-        resolved_initial_canonical = final_canonical
-        visited.add(final_canonical)
-        title, raw_title, plan_b_urls, discovered_feed = _parse_html_metadata(
-            decoded, final_canonical, visited, use_live_dns=use_live_dns
-        )
-        body_text = html_to_plain_text(decoded, max_chars=MAX_STAGE2_BODY_CHARS)
-        best_canonical = final_canonical
-        best_title = title
-        best_body = body_text
-        is_ok, last_reason = check_content_sufficiency(body_text, decoded, page_title=raw_title)
-        if is_ok:
-            initial_item = _make_fast_lane_item(
-                original_url=url,
-                canonical_url=final_canonical,
-                title=title,
-                body_text=body_text,
-                discovered_feed_url=discovered_feed,
+    else:
+        try:
+            final_canonical, decoded = _safe_fetch(initial_canonical)
+            resolved_initial_canonical = final_canonical
+            visited.add(final_canonical)
+            title, raw_title, plan_b_urls, discovered_feed = _parse_html_metadata(
+                decoded, final_canonical, visited, use_live_dns=use_live_dns
             )
-            # Return immediately unless this is an X/Twitter status page with an embedded external article link
-            if not (extract_domain(final_canonical) in _X_STATUS_DOMAINS and plan_b_urls):
-                return initial_item
-    except SSRFError:
-        raise
-    except Exception as exc:  # noqa: BLE001
-        last_reason = f"Initial HTTP fetch failed: {redact_secrets(str(exc))[:160]}"
+            body_text = html_to_plain_text(decoded, max_chars=MAX_STAGE2_BODY_CHARS)
+            best_canonical = final_canonical
+            best_title = title
+            best_body = body_text
+            is_ok, last_reason = check_content_sufficiency(body_text, decoded, page_title=raw_title)
+            if is_ok:
+                initial_item = _make_fast_lane_item(
+                    original_url=url,
+                    canonical_url=final_canonical,
+                    title=title,
+                    body_text=body_text,
+                    discovered_feed_url=discovered_feed,
+                )
+                # Return immediately unless this is an X/Twitter status page with an embedded external article link
+                if not (extract_domain(final_canonical) in _X_STATUS_DOMAINS and plan_b_urls):
+                    return initial_item
+        except SSRFError:
+            raise
+        except Exception as exc:  # noqa: BLE001
+            last_reason = f"Initial HTTP fetch failed: {redact_secrets(str(exc))[:160]}"
 
     # Plan B Step 1: follow og:url, <link rel="canonical">, or external article links
     extra_fetches = 0
-    for cand_url in plan_b_urls:
+
+    def _try_plan_b_target(target_url: str) -> CandidateItem | None:
+        nonlocal extra_fetches, best_canonical, best_title, best_body, last_reason
         if extra_fetches >= MAX_PLAN_B_FETCHES:
-            break
+            return None
+        visited.add(target_url)
+
+        if _github_blob_to_raw_url(target_url) is not None:
+            extra_fetches += 1
+            cand_blob = _try_fetch_github_blob_raw(
+                target_url, getter=getter, use_live_dns=use_live_dns
+            )
+            if cand_blob is not None:
+                blob_title, blob_body = cand_blob
+                blob_ok, blob_reason = check_content_sufficiency(blob_body)
+                if blob_ok:
+                    return _make_fast_lane_item(
+                        original_url=url,
+                        canonical_url=target_url,
+                        title=blob_title,
+                        body_text=blob_body,
+                    )
+                if len(blob_body) > len(best_body):
+                    best_canonical = target_url
+                    best_title = blob_title
+                    best_body = blob_body
+                last_reason = blob_reason
+                return None
+            if extra_fetches >= MAX_PLAN_B_FETCHES:
+                return None
+
         extra_fetches += 1
-        visited.add(cand_url)
-        cand_blob = _try_fetch_github_blob_raw(
-            cand_url, getter=getter, use_live_dns=use_live_dns
-        )
-        if cand_blob is not None:
-            blob_title, blob_body = cand_blob
-            blob_ok, blob_reason = check_content_sufficiency(blob_body)
-            if blob_ok:
-                return _make_fast_lane_item(
-                    original_url=url,
-                    canonical_url=cand_url,
-                    title=blob_title,
-                    body_text=blob_body,
-                )
-            if len(blob_body) > len(best_body):
-                best_canonical = cand_url
-                best_title = blob_title
-                best_body = blob_body
-            last_reason = blob_reason
         try:
-            cand_final, cand_html = _safe_fetch(cand_url)
+            cand_final, cand_html = _safe_fetch(target_url)
         except Exception:  # noqa: BLE001
-            continue
+            return None
         visited.add(cand_final)
         cand_title, cand_raw_title, _, cand_feed = _parse_html_metadata(
             cand_html, cand_final, visited, use_live_dns=use_live_dns
@@ -1420,6 +1442,14 @@ def build_fast_lane_candidate(
             best_title = cand_title
             best_body = cand_body
         last_reason = cand_reason
+        return None
+
+    for cand_url in plan_b_urls:
+        if extra_fetches >= MAX_PLAN_B_FETCHES:
+            break
+        resolved_item = _try_plan_b_target(cand_url)
+        if resolved_item is not None:
+            return resolved_item
 
     # Plan B Step 2: publish.twitter.com/oembed fallback for x.com / twitter.com status URLs
     x_status_url = ""
@@ -1461,44 +1491,9 @@ def build_fast_lane_candidate(
                 for olink in oembed_links:
                     if extra_fetches >= MAX_PLAN_B_FETCHES:
                         break
-                    extra_fetches += 1
-                    visited.add(olink)
-                    olink_blob = _try_fetch_github_blob_raw(
-                        olink, getter=getter, use_live_dns=use_live_dns
-                    )
-                    if olink_blob is not None:
-                        blob_title, blob_body = olink_blob
-                        blob_ok, _ = check_content_sufficiency(blob_body)
-                        if blob_ok:
-                            return _make_fast_lane_item(
-                                original_url=url,
-                                canonical_url=olink,
-                                title=blob_title,
-                                body_text=blob_body,
-                            )
-                    try:
-                        ofinal, ohtml = _safe_fetch(olink)
-                    except Exception:  # noqa: BLE001
-                        continue
-                    visited.add(ofinal)
-                    otitle, oraw_title, _, ofeed = _parse_html_metadata(
-                        ohtml, ofinal, visited, use_live_dns=use_live_dns
-                    )
-                    obody = html_to_plain_text(ohtml, max_chars=MAX_STAGE2_BODY_CHARS)
-                    ook, oreason = check_content_sufficiency(obody, ohtml, page_title=oraw_title)
-                    if ook:
-                        return _make_fast_lane_item(
-                            original_url=url,
-                            canonical_url=ofinal,
-                            title=otitle,
-                            body_text=obody,
-                            discovered_feed_url=ofeed,
-                        )
-                    if len(obody) > len(best_body):
-                        best_canonical = ofinal
-                        best_title = otitle
-                        best_body = obody
-                    last_reason = oreason
+                    resolved_item = _try_plan_b_target(olink)
+                    if resolved_item is not None:
+                        return resolved_item
 
                 oembed_body = html_to_plain_text(oembed_html, max_chars=MAX_STAGE2_BODY_CHARS)
                 oembed_ok, oembed_reason = check_content_sufficiency(oembed_body, oembed_html)
@@ -1570,13 +1565,12 @@ def enrich_survivor_body(
                         "enrichment_status": "enriched",
                     }
                 )
+            return item.model_copy(update={"enrichment_status": "fetch_blocked"})
 
         final_url, raw_bytes = getter(item.canonical_url)
         decoded = raw_bytes.decode("utf-8", errors="replace")
         parser = _parse_plan_b_html(decoded)
-        page_title = sanitize_single_line(
-            html_to_plain_text(parser.title_text, max_chars=240), max_chars=240
-        )
+        page_title = sanitize_single_line(parser.title_text, max_chars=240)
         extracted = html_to_plain_text(decoded, max_chars=MAX_STAGE2_BODY_CHARS)
         if detect_content_wall(extracted, page_title=page_title) is not None:
             return item.model_copy(update={"enrichment_status": "fetch_blocked"})

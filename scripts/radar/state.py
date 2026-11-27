@@ -570,7 +570,8 @@ def _collect_health_candidates(
                 f"({merged_recent} human-merged, {approved_only_recent} Stage 3-approved)"
             )
         feed_hint = resolve_feed_hint(norm_key, rec.discovered_feed_url)
-        hint_clause = f" · feed hint: `{sanitize_single_line(feed_hint, 200)}`" if feed_hint else ""
+        safe_hint = sanitize_single_line(feed_hint, 200).replace("`", "") if feed_hint else ""
+        hint_clause = f" · feed hint: `{safe_hint}`" if safe_hint else ""
         promote_candidates.append(
             f"- **`{norm_key}`**: {count_label} in last {window_days}d{hint_clause} — "
             f"consider adding RSS/Atom feed to `radar/feeds.yaml`."
