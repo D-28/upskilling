@@ -1,0 +1,109 @@
+# Reusable Base-Branch REVIEW.md Workflow Example
+#
+# Demonstrates anti-gaming diff review in CI:
+# 1. Loads REVIEW.md strictly from origin/<base_ref> (never from the PR head).
+# 2. Explicitly flags PRs that modify REVIEW.md or workflow files (NO UNDO gate).
+# 3. Runs scripts/diff_context.py --json and renders matched checks to $GITHUB_STEP_SUMMARY.
+#
+# Copy into .github/workflows/ to enable on a repository.
+
+name: Base-Branch Diff Review Context
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: read
+
+jobs:
+  review-context:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository with full history
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: "3.11"
+
+      - name: Verify base-branch REVIEW.md and collect diff context
+        env:
+          BASE_REF: ${{ github.base_ref }}
+        run: |
+          set -euo pipefail
+          # Anti-gaming invariant: read both REVIEW.md and diff_context.py strictly
+          # from the base branch (never from the PR head working tree).
+          if git cat-file -e "origin/${BASE_REF}:REVIEW.md" 2>/dev/null; then
+            echo "Verified REVIEW.md exists on origin/${BASE_REF}."
+          else
+            echo "Warning: origin/${BASE_REF}:REVIEW.md not found; falling back to empty trigger table."
+          fi
+
+          git show "origin/${BASE_REF}:scripts/diff_context.py" > /tmp/base-diff-context.py
+          python3 /tmp/base-diff-context.py \
+            --base "origin/${BASE_REF}" \
+            --head HEAD \
+            --review-ref "origin/${BASE_REF}" \
+            --json > /tmp/diff-context.json
+
+      - name: Render diff-triggered checks to Job Summary
+        run: |
+          python3 - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          data = json.loads(Path("/tmp/diff-context.json").read_text(encoding="utf-8"))
+          lines = [
+              "## Base-Branch Diff Review Context",
+              "",
+              f"- **Reviewed Commit:** `{data['head_sha']}`",
+              f"- **Base Ref:** `{data['base_ref']}` (`{data['base_sha']}`)",
+              f"- **Rubric Source:** `{data['review_md_source'] or 'missing on base branch'}`",
+              f"- **Diff Totals:** {data['totals']['files_changed']} files "
+              f"(+{data['totals']['additions']} / -{data['totals']['deletions']})",
+              "",
+          ]
+
+          if data["review_md_modified"]:
+              lines.append(
+                  "> [!WARNING]\n"
+                  "> **This PR modifies `REVIEW.md`.** "
+                  "Checks below were loaded strictly from the base branch; "
+                  "require explicit human code-owner sign-off before merge."
+              )
+              lines.append("")
+
+          if data["workflow_files_modified"]:
+              wf_list = ", ".join(f"`{p}`" for p in data["workflow_files_modified"])
+              lines.append(
+                  "> [!CAUTION]\n"
+                  f"> **`NO UNDO` gate — workflow files modified:** {wf_list}. "
+                  "Require explicit human sign-off."
+              )
+              lines.append("")
+
+          checks = data["triggered_checks"]
+          if checks:
+              lines.append("### Matched Diff-Triggered Checks")
+              lines.append("")
+              lines.append("| # | Matched Files | Required Check |")
+              lines.append("|---|---|---|")
+              for item in checks:
+                  matched = ", ".join(f"`{f}`" for f in item["matched_files"])
+                  lines.append(f"| {item['id']} | {matched} | {item['check']} |")
+          else:
+              lines.append("_No diff-specific `REVIEW.md` triggers matched this PR._")
+
+          summary_path = os.environ.get("GITHUB_STEP_SUMMARY")
+          output = "\n".join(lines) + "\n"
+          if summary_path:
+              with open(summary_path, "a", encoding="utf-8") as fh:
+                  fh.write(output)
+          else:
+              print(output)
+          PY
